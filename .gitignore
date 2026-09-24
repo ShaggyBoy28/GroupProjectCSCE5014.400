@@ -1,0 +1,19 @@
+# Python environment and caches
+.venv/
+__pycache__/
+*.pyc
+
+# Files the app writes at runtime (uploaded videos land in the project folder)
+res_*.mp4
+*.mp4
+!sample_video.mp4
+
+# Setup logs and training output
+setup.log
+lightning_logs/
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

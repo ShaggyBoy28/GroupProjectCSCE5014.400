@@ -1,0 +1,14 @@
+# Updated dependency set for running the Flask demo (app.py) on current Python (macOS Apple Silicon, Linux/WSL2, Windows).
+# The original requirements.txt pins 2021-era packages that no longer install on
+# Apple Silicon or Python 3.10+. Verified with torch 2.x, Lightning 2.6, OpenCV 5.0 and Flask 3.1.
+# Detectron2 is not on PyPI; setup.sh / setup_windows.ps1 build it from source after these install.
+torch>=2.4
+torchvision
+pytorch-lightning>=2.4   # 2.4+ accepts weights_only in load_from_checkpoint
+torchmetrics
+flask>=3.0
+numpy
+opencv-python-headless   # no GUI needed; avoids the libGL dependency on Linux/WSL
+setuptools<81   # detectron2 still imports pkg_resources, removed in setuptools 81
+wheel
+ninja
