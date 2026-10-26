@@ -73,5 +73,23 @@ if ($alreadyInstalled) {
 }
 
 & $VenvPython -c "import torch, detectron2, cv2, flask, pytorch_lightning as pl; print('OK  torch', torch.__version__, '| detectron2', detectron2.__version__, '| opencv', cv2.__version__, '| lightning', pl.__version__)"
+Write-Host "==> Building the React frontend (needs Node.js 20.19+)"
+$nodeOk = $false
+if (Get-Command node -ErrorAction SilentlyContinue) {
+    $v = [version]((node -v).TrimStart('v'))
+    $nodeOk = ($v.Major -gt 20) -or ($v.Major -eq 20 -and $v.Minor -ge 19)
+}
+if ($nodeOk) {
+    Push-Location frontend
+    npm ci
+    if ($LASTEXITCODE -eq 0) { npm run build }
+    if ($LASTEXITCODE -ne 0) { Write-Host "Frontend build failed; the app will use the existing frontend\dist if there is one." }
+    Pop-Location
+} else {
+    Write-Host "Node.js 20.19+ not found. Skipping the frontend build (winget install OpenJS.NodeJS.LTS to get it)."
+    if (Test-Path "frontend\dist\index.html") { Write-Host "Using the existing build in frontend\dist." }
+    else { Write-Host "Until then the app serves the original page." }
+}
+
 Write-Host ""
 Write-Host "Setup complete. Start the app with:  powershell -ExecutionPolicy Bypass -File .\run_windows.ps1"

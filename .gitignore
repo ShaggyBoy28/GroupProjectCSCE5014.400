@@ -5,11 +5,14 @@ __pycache__/
 
 # Files the app writes at runtime (uploaded videos land in the project folder)
 res_*.mp4
+res_*.json
 *.mp4
 !sample_video.mp4
 
 # Setup logs and training output
 setup.log
+run.log
+start.command
 lightning_logs/
 
 # OS / editor noise
@@ -17,3 +20,7 @@ lightning_logs/
 Thumbs.db
 .vscode/
 .idea/
+
+# React frontend
+frontend/node_modules/
+frontend/dist/

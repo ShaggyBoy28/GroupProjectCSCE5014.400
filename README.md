@@ -10,12 +10,13 @@ This repository is **Group 7's** working copy of that project for CSCE 5214 (Fal
 
 ## What the app does
 
-A Flask web app that classifies human actions in a video:
+A web app (React frontend, Flask backend) that classifies human actions in a video:
 
 1. **Pose detection:** Detectron2's Keypoint R-CNN finds 17 body keypoints in every frame.
 2. **Buffering:** the (x, y) keypoints from 32 consecutive frames form one input window (32 × 34 values).
 3. **Classification:** an LSTM (PyTorch Lightning, 1 layer, 50 hidden units) predicts one of 6 actions: `JUMPING`, `JUMPING_JACKS`, `BOXING`, `WAVING_2HANDS`, `WAVING_1HAND`, `CLAPPING_HANDS`.
-4. **Output:** a copy of the video with the skeleton and predicted action drawn on each frame, streamed in the browser and available to download.
+4. **Output:** a copy of the video with the skeleton and predicted action drawn on each frame, playable in the browser and available to download.
+5. **Activity breakdown:** a summary of how the model decided: main activity, label changes, average confidence, a timeline of activities, each class's probability over time, time per activity and a segments table.
 
 > The original project README ([docs/ORIGINAL_README.md](docs/ORIGINAL_README.md)) describes a TensorFlow 1.x, 2-layer LSTM trained on OpenPose keypoints. That model lives in `Human_Activity_Recogination.ipynb`. The web app runs the **PyTorch** model in `src/lstm.py` with the checkpoint `models/saved_model.ckpt`.
 
@@ -27,10 +28,11 @@ A Flask web app that classifies human actions in a video:
 |---|---|---|---|---|
 | OS | macOS 13+ on Apple Silicon (M1 or newer) | Windows 10 (2004+) or 11 | Windows 10/11, 64-bit | Ubuntu 22.04+ / Debian 12+ |
 | Build tools | Xcode Command Line Tools | `build-essential` in Ubuntu | Visual Studio 2022 Build Tools (C++) | `build-essential` |
+| Node.js (frontend) | 20.19+ (`brew install node`) | 20.19+ in Ubuntu | 20.19+ (`winget install OpenJS.NodeJS.LTS`) | 20.19+ |
 | Disk space | ~3 GB | ~3 GB | ~6 GB (incl. build tools) | ~3 GB |
 | GPU | Not needed | Not needed | Not needed | Not needed |
 
-The setup scripts install **Python 3.11** automatically (via [uv](https://docs.astral.sh/uv/)). You don't need to install Python yourself.
+The setup scripts install **Python 3.11** automatically (via [uv](https://docs.astral.sh/uv/)), so you don't need to install Python yourself. They also build the React frontend if Node.js is installed; without Node.js the app falls back to the original page.
 
 Why so much setup? Detectron2 isn't published as a ready-made package, so it's compiled from source on your machine. That takes 3–15 minutes the first time.
 
@@ -133,9 +135,12 @@ Then open <http://127.0.0.1:5001>. On Linux, `setup.sh` installs the CPU-only Py
 
 ## Using the app
 
-1. Either **upload an `.mp4`** (left side) or use the **sample video** (right side), then click **Submit**.
-2. The progress bar shows the analysis. It runs on the CPU, so expect a few minutes for the 10-second sample.
-3. When it reaches 100%, the result video plays with the skeleton and `Action: …` label, and a **Download Result File** link appears.
+1. **Home:** choose an `.mp4` and click **Analyze**, or click **Analyze sample**.
+2. **Analyzing:** shows the video, the percentage, frames analyzed and the current label. It runs on the CPU, so expect a few minutes for the 10-second sample. Keep the page open; the results open automatically.
+3. **Result video:** the annotated video with the skeleton and `Action: …` label, plus length, frames, frame rate and resolution. **Download video** saves it.
+4. **Activity breakdown** (tab next to Result video): summary cards, timeline, confidence over time, time per activity and segments.
+
+The original page is still available at <http://127.0.0.1:5001/legacy>.
 
 Stop the app with **Ctrl+C** in the terminal.
 
@@ -143,7 +148,7 @@ Stop the app with **Ctrl+C** in the terminal.
 - **No label for the first ~1 second:** the model needs 32 frames of poses before its first prediction.
 - **Labels lag ~1 second behind the action:** each prediction covers the previous 32 frames.
 - **Only the first person detected** in each frame is analyzed.
-- **Result videos** are saved as `res_<name>.mp4` in the project folder. They're ignored by git.
+- **Results** are saved as `res_<name>.mp4` (video) and `res_<name>.json` (predictions) in the project folder. They're ignored by git.
 
 ---
 
@@ -151,13 +156,15 @@ Stop the app with **Ctrl+C** in the terminal.
 
 ```
 .
-├── app.py                      # Flask app: routes, model loading
+├── app.py                      # Flask app: model loading, serves the React build and the legacy page
+├── frontend/                   # React + TypeScript + Tailwind UI
 ├── src/
+│   ├── api.py                  # JSON API used by the frontend + Activity Breakdown math (docs/API.md)
 │   ├── video_analyzer.py       # frame loop: pose → 32-frame buffer → LSTM → annotated video
 │   ├── lstm.py                 # LSTM model, dataset and data module (PyTorch Lightning)
 │   ├── train.py                # training entry point
 │   └── utils.py                # keypoint filtering and skeleton drawing
-├── templates/index.html        # web page (Bootstrap + jQuery)
+├── templates/index.html        # original web page (Bootstrap + jQuery), served at /legacy
 ├── models/saved_model.ckpt     # trained LSTM checkpoint used by the app
 ├── sample_video.mp4            # demo video
 ├── images/                     # validation accuracy/loss curves from training
@@ -168,8 +175,26 @@ Stop the app with **Ctrl+C** in the terminal.
 ├── requirements.txt            # original 2021 pins, kept for reference
 ├── setup.sh / run.sh           # macOS, Linux, WSL2
 ├── setup_windows.ps1 / run_windows.ps1   # native Windows
-└── docs/ORIGINAL_README.md     # upstream README
+└── docs/
+    ├── API.md                  # API reference
+    └── ORIGINAL_README.md      # upstream README
 ```
+
+---
+
+## Development
+
+**Frontend:** with the backend running (`bash run.sh`), start the dev server for hot reload:
+
+```bash
+cd frontend
+npm ci
+npm run dev        # http://localhost:5173, API calls are proxied to Flask on port 5001
+```
+
+Run `npm run build` afterwards so Flask serves your changes at port 5001. Building needs Node.js 20.19+.
+
+Frontend layout (`frontend/src/`): `api.ts` (API types and calls), `lib.ts` (activity names/colors, formatting, data hooks), `components.tsx` (shared UI), `pages/` (Home, Analyzing, Results, Breakdown), `index.css` (Tailwind and the Figma colors).
 
 ---
 
@@ -187,8 +212,16 @@ The upstream app doesn't run on current machines as-is. We made these changes:
 | Newer OpenCV rejects tensor coordinates when drawing the skeleton | Convert keypoints to plain integers | `src/utils.py` |
 | macOS uses port 5000 for AirPlay Receiver | Default to port 5001, configurable with `PORT` / `HOST` | `app.py` |
 | Auto-reloader loaded both models twice | Reloader off | `app.py` |
+| OpenCV's `mp4v` result videos don't play in browsers | Re-encode results to H.264 with the ffmpeg bundled in `imageio-ffmpeg` | `src/video_analyzer.py` |
+| Result videos were always written at 30 fps | Use the input video's frame rate | `src/video_analyzer.py` |
 
-The model, training code, templates and analysis logic are otherwise unchanged. Generated `__pycache__` files from the upstream repo were left out.
+### New in this repo
+
+- **React frontend** (`frontend/`) implementing the Phase 2 design: Home, Analyzing, Result video and the new **Activity breakdown** page.
+- **JSON API** (`src/api.py`, [docs/API.md](docs/API.md)) with live progress over server-sent events.
+- **Breakdown data** (`src/api.py`): the analysis now keeps all 6 class probabilities for every prediction and turns them into segments and summary statistics.
+
+The model, training code and original template are otherwise unchanged. Generated `__pycache__` files from the upstream repo were left out.
 
 ---
 
