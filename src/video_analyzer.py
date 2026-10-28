@@ -2,7 +2,7 @@ import cv2
 import ntpath
 from .utils import filter_persons, draw_keypoints
 from .lstm import WINDOW_SIZE
-import time
+from .performance import ProcessingPerformance
 
 import numpy as np
 import torch
@@ -21,93 +21,114 @@ LABELS = {
 # configuring a higher value will result in better FPS (frames per rate), but accuracy might get impacted
 SKIP_FRAME_COUNT = 0
 
+def _synchronize_model(model):
+    """Complete CUDA work on this model's device before reading the clock."""
+    if model is not None:
+        parameter = next(model.parameters(), None)
+        if parameter is not None and parameter.is_cuda:
+            torch.cuda.synchronize(parameter.device)
+
+
 # analyse the video
-def analyse_video(pose_detector, lstm_classifier, video_path):
-    # open the video
-    cap = cv2.VideoCapture(video_path)
-    # width of image frame
-    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    # height of image frame
-    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    # frames per second of the input video
-    fps = int(cap.get(cv2.CAP_PROP_FPS))
-    # total number of frames in the video
-    tot_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    # video output codec
-    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-    # extract the file name from video path
-    file_name = ntpath.basename(video_path)
-    # video writer
-    vid_writer = cv2.VideoWriter('res_{}'.format(
-        file_name), fourcc, 30, (width, height))
-    # counter
-    counter = 0
-    # buffer to keep the output of detectron2 pose estimation
-    buffer_window = []
-    # start time
-    start = time.time()
-    label = None
-    # iterate through the video
-    while True:
-        # read the frame
-        ret, frame = cap.read()
-        # return if end of the video
-        if ret == False:
-            break
-        # make a copy of the frame
-        img = frame.copy()
-        if(counter % (SKIP_FRAME_COUNT+1) == 0):
-            # predict pose estimation on the frame
-            outputs = pose_detector(frame)
-            # filter the outputs with a good confidence score
-            persons, pIndicies = filter_persons(outputs)
-            if len(persons) >= 1:
-                # pick only pose estimation results of the first person.
-                # actually, we expect only one person to be present in the video.
-                p = persons[0]
-                # draw the body joints on the person body
-                draw_keypoints(p, img)
-                # input feature array for lstm
-                features = []
-                # add pose estimate results to the feature array
-                for i, row in enumerate(p):
-                    features.append(row[0])
-                    features.append(row[1])
+def analyse_video(pose_detector, lstm_classifier, video_path, *,
+                  on_progress=None, on_complete=None):
+    """Yield legacy percentage SSE; optionally report performance dictionaries.
 
-                # append the feature array into the buffer
-                # not that max buffer size is 32 and buffer_window operates in a sliding window fashion
-                if len(buffer_window) < WINDOW_SIZE:
-                    buffer_window.append(features)
-                else:
-                    # convert input to tensor
-                    model_input = torch.Tensor(np.array(buffer_window, dtype=np.float32))
-                    # add extra dimension
-                    model_input = torch.unsqueeze(model_input, dim=0)
-                    # predict the action class using lstm
-                    y_pred = lstm_classifier(model_input)
-                    prob = F.softmax(y_pred, dim=1)
-                    # get the index of the max probability
-                    pred_index = prob.data.max(dim=1)[1]
-                    # pop the first value from buffer_window and add the new entry in FIFO fashion, to have a sliding window of size 32.
-                    buffer_window.pop(0)
-                    buffer_window.append(features)
-                    label = LABELS[pred_index.numpy()[0]]
-                    #print("Label detected ", label)
+    on_progress(metrics) runs after each written frame. on_complete(summary)
+    runs only after successful exhaustion and resource finalization. The generator
+    also returns that summary. No metrics are persisted or added to the SSE wire
+    format. Missing measurements are omitted (including LSTM times before the
+    first prediction, or all LSTM averages for a run without predictions).
 
-        # add predicted label into the frame
-        if label is not None:
-            cv2.putText(img, 'Action: {}'.format(label),
-                        (int(width-400), height-50), cv2.FONT_HERSHEY_COMPLEX, 0.9, (102, 255, 255), 2)
-        # increment counter
-        counter += 1
-        # write the frame into the result video
-        vid_writer.write(img)
-        # compute the completion percentage
-        percentage = int(counter*100/tot_frames)
-        # return the completion percentage
-        yield "data:" + str(percentage) + "\n\n"
-    analyze_done = time.time()
-    print("Video processing finished in ", analyze_done - start)
+    totalS includes capture/writer setup, decoding, pose filtering, inference,
+    drawing, encoding/writing, EOF read, and resource release. It excludes callback
+    execution and time suspended at yield. avgFrameMs covers successful reads
+    through write; stage averages use actual stage calls. Pose time includes
+    detection and filtering/CPU keypoint transfer. LSTM time includes forward,
+    softmax and argmax, excluding tensor preparation. CUDA stages synchronize on
+    their model device. Peak memory is the highest sampled process RSS.
+    """
+    performance = ProcessingPerformance.for_process()
+    cap = None
+    vid_writer = None
+    try:
+        cap = cv2.VideoCapture(video_path)
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        tot_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        file_name = ntpath.basename(video_path)
+        # Keep the existing codec, output name and 30 FPS behavior.
+        vid_writer = cv2.VideoWriter('res_{}'.format(file_name), fourcc, 30, (width, height))
+        counter = 0
+        buffer_window = []
+        label = None
+        while True:
+            frame_start = performance.begin_frame()
+            ret, frame = cap.read()
+            if ret == False:
+                break
+            img = frame.copy()
+            if counter % (SKIP_FRAME_COUNT + 1) == 0:
+                with performance.measure(
+                    "pose", lambda: _synchronize_model(getattr(pose_detector, "model", None))
+                ):
+                    outputs = pose_detector(frame)
+                    persons, pIndicies = filter_persons(outputs)
+                if len(persons) >= 1:
+                    # Preserve original person selection and sliding-window order.
+                    p = persons[0]
+                    draw_keypoints(p, img)
+                    features = []
+                    for i, row in enumerate(p):
+                        features.append(row[0])
+                        features.append(row[1])
+                    if len(buffer_window) < WINDOW_SIZE:
+                        buffer_window.append(features)
+                    else:
+                        model_input = torch.Tensor(np.array(buffer_window, dtype=np.float32))
+                        model_input = torch.unsqueeze(model_input, dim=0)
+                        with performance.measure(
+                            "lstm", lambda: _synchronize_model(lstm_classifier)
+                        ):
+                            y_pred = lstm_classifier(model_input)
+                            prob = F.softmax(y_pred, dim=1)
+                            pred_index = prob.data.max(dim=1)[1]
+                        buffer_window.pop(0)
+                        buffer_window.append(features)
+                        label = LABELS[pred_index.numpy()[0]]
+            if label is not None:
+                cv2.putText(img, 'Action: {}'.format(label),
+                            (int(width-400), height-50), cv2.FONT_HERSHEY_COMPLEX,
+                            0.9, (102, 255, 255), 2)
+            counter += 1
+            vid_writer.write(img)
+            live_metrics = performance.end_frame(frame_start)
+            # Unknown frame counts must not prevent processing or divide by zero.
+            percentage = int(counter * 100 / tot_frames) if tot_frames > 0 else 0
+            performance.pause()
+            try:
+                if on_progress is not None:
+                    on_progress(live_metrics)
+                yield "data:" + str(percentage) + "\n\n"
+            finally:
+                performance.resume()
+    finally:
+        try:
+            if cap is not None:
+                cap.release()
+        finally:
+            try:
+                if vid_writer is not None:
+                    vid_writer.release()
+            finally:
+                performance.sample_memory()
+                performance.pause()
+    summary = performance.summary()
+    print("Video processing finished in ", summary["totalS"])
+    if on_complete is not None:
+        on_complete(summary)
+    return summary
 
 
 def stream_video(video_path):
