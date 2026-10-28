@@ -9,8 +9,9 @@ from flask import current_app as app
 from werkzeug.utils import secure_filename
 
 from src.api import create_api_blueprint
-from src.lstm import ActionClassificationLSTM
-from src.video_analyzer import analyse_video, analyse_video_events, probe_video, stream_video
+from src.evaluation import load_evaluation
+from src.lstm import ActionClassificationLSTM, WINDOW_SIZE
+from src.video_analyzer import LABELS, analyse_video, analyse_video_events, probe_video, stream_video
 
 # import some common Detectron2 utilities
 from detectron2 import model_zoo
@@ -61,8 +62,19 @@ class AnalysisServices:
     def analyze(path):
         return analyse_video_events(pose_detector, lstm_classifier, path)
 
+    @staticmethod
+    def model_metrics():
+        try:
+            return load_evaluation(
+                os.environ.get("MODEL_EVALUATION_PATH"), "models/saved_model.ckpt",
+                list(LABELS.values()), WINDOW_SIZE,
+            )
+        except (OSError, ValueError, KeyError, TypeError, AttributeError, OverflowError, RecursionError):
+            app.logger.warning("Model evaluation unavailable or invalid", exc_info=True)
+            return None
 
-app.register_blueprint(create_api_blueprint(AnalysisServices, UPLOAD_FOLDER))
+
+app.register_blueprint(create_api_blueprint(AnalysisServices, UPLOAD_FOLDER, window_size=WINDOW_SIZE))
 
 
 class DataObject():

@@ -12,9 +12,14 @@ prediction is one LSTM output for one frame: {"frame": int, "probabilities": [6 
 
 import json
 import os
+import tempfile
+import math
 
 from flask import Blueprint, Response, abort, jsonify, request, send_from_directory, stream_with_context
 from werkzeug.utils import secure_filename
+from .performance import performance_payload
+from .results import read_result, video_operation, invalidate_result, ResultNotReady, VideoBusy
+from .evaluation import validate_metrics
 
 # ---------- Activity Breakdown ----------
 
@@ -159,7 +164,7 @@ def _is_allowed(filename):
     return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
 
 
-def create_api_blueprint(services, video_folder):
+def create_api_blueprint(services, video_folder, *, window_size=32):
     api = Blueprint("api", __name__, url_prefix="/api")
     video_folder = os.path.abspath(video_folder)
 
@@ -186,6 +191,18 @@ def create_api_blueprint(services, video_folder):
     def health():
         return jsonify({"status": "ok"})
 
+    @api.get("/model")
+    def get_model():
+        # The optional provider returns only independently validated evaluation
+        # artifacts. Never estimate accuracy from an uploaded video's confidence.
+        provider = getattr(services, "model_metrics", None)
+        try:
+            supplied = provider() if provider is not None else None
+            metrics = validate_metrics(supplied, LABELS) if supplied is not None else None
+        except (OSError, ValueError, KeyError, TypeError, AttributeError, OverflowError, RecursionError):
+            metrics = None
+        return jsonify({"labels": LABELS, "windowSize": window_size, "metrics": metrics})
+
     @api.get("/sample")
     def sample():
         return get_video(SAMPLE_VIDEO)
@@ -198,18 +215,53 @@ def create_api_blueprint(services, video_folder):
         filename = secure_filename(video_file.filename)
         if not filename or not _is_allowed(filename):
             abort(400, description="Only .mp4 files are supported")
-        if filename == SAMPLE_VIDEO or filename.startswith("res_"):
+        if filename.lower() == SAMPLE_VIDEO.lower() or filename.lower().startswith("res_"):
             abort(400, description="That file name is reserved; rename the file and try again")
-        video_file.save(os.path.join(video_folder, filename))
+        path = os.path.join(video_folder, filename)
+        temporary = None
+        try:
+            with video_operation(path):
+                with tempfile.NamedTemporaryFile(dir=video_folder, prefix="res_upload_", delete=False) as staged:
+                    temporary = staged.name
+                    video_file.save(staged)
+                invalidate_result(path)
+                os.replace(temporary, path)
+        except VideoBusy:
+            return jsonify({"error": "Video is busy; try again after analysis finishes"}), 409
+        except OSError:
+            return jsonify({"error": "Video upload could not be saved"}), 500
+        finally:
+            if temporary is not None and os.path.exists(temporary):
+                os.remove(temporary)
         return jsonify({"name": filename}), 201
 
     @api.get("/videos/<name>")
     def get_video(name):
         path = video_path(name)
-        info = {"name": name, **services.probe(path)}
-        info["analyzed"] = os.path.isfile(result_data_path(name)) and os.path.isfile(
-            os.path.join(video_folder, result_video_name(name))
-        )
+        try:
+            metadata = services.probe(path)
+            for key in ("fps", "frameCount", "width", "height", "durationS"):
+                value = metadata[key]
+                if (type(value) not in (int, float) or value < 0
+                        or value > 2**53 - 1 or not math.isfinite(value)):
+                    raise ValueError("Invalid video metadata")
+            if metadata["fps"] <= 0 or metadata["width"] <= 0 or metadata["height"] <= 0:
+                raise ValueError("Invalid video dimensions or frame rate")
+            info = {"name": name, **metadata}
+            json.dumps(info, allow_nan=False)
+        except FileNotFoundError:
+            abort(404, description="Video not found")
+        except (ValueError, OverflowError):
+            return jsonify({"error": "Video is invalid or unsupported"}), 422
+        except OSError:
+            return jsonify({"error": "Video metadata could not be read"}), 500
+        except Exception:
+            return jsonify({"error": "Video metadata could not be read"}), 500
+        try:
+            read_result(path)
+            info["analyzed"] = True
+        except (ResultNotReady, VideoBusy, OSError, ValueError, KeyError, TypeError, AttributeError):
+            info["analyzed"] = False
         return jsonify(info)
 
     @api.get("/videos/<name>/file")
@@ -222,34 +274,56 @@ def create_api_blueprint(services, video_folder):
         path = video_path(name)
 
         def events():
+            analysis = None
             try:
-                for event in services.analyze(path):
-                    yield "data: {}\n\n".format(json.dumps(event))
+                analysis = iter(services.analyze(path))
+                for event in analysis:
+                    if event.get("type") == "progress" and "metrics" in event:
+                        event = {**event, "metrics": performance_payload(event["metrics"])}
+                    yield "data: {}\n\n".format(json.dumps(event, allow_nan=False))
             except Exception as error:  # surface the failure to the browser instead of a dropped stream
                 yield "data: {}\n\n".format(json.dumps({"type": "error", "message": str(error)}))
+            finally:
+                close = getattr(analysis, "close", None)
+                if close is not None:
+                    close()
 
         headers = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
         return Response(stream_with_context(events()), mimetype="text/event-stream", headers=headers)
 
     @api.get("/videos/<name>/result")
     def get_result_video(name):
-        video_path(name)
-        result_name = result_video_name(name)
-        if not os.path.isfile(os.path.join(video_folder, result_name)):
+        path = video_path(name)
+        try:
+            with video_operation(path):
+                read_result(path, locked=True)
+                # Open the response file while the run lock is held so the
+                # response cannot select a newer video's bytes after validation.
+                response = send_from_directory(
+                    video_folder, result_video_name(name), mimetype="video/mp4",
+                    as_attachment=request.args.get("download") == "1",
+                    download_name=result_video_name(name),
+                )
+            return response
+        except (ResultNotReady, VideoBusy, OSError, ValueError, KeyError, TypeError, AttributeError):
             abort(404, description="This video hasn't been analyzed yet")
-        download = request.args.get("download") == "1"
-        return send_from_directory(
-            video_folder, result_name, mimetype="video/mp4", as_attachment=download, download_name=result_name
-        )
 
     @api.get("/videos/<name>/breakdown")
     def get_breakdown(name):
-        video_path(name)
+        path = video_path(name)
         data_path = result_data_path(name)
         if not os.path.isfile(data_path):
             abort(404, description="This video hasn't been analyzed yet")
-        with open(data_path, "r", encoding="utf-8") as data_file:
-            data = json.load(data_file)
-        return jsonify(build_breakdown(data["predictions"], data["video"], data["windowSize"]))
+        try:
+            data = read_result(path)
+            result = build_breakdown(data["predictions"], data["video"], data["windowSize"])
+            if isinstance(data.get("performance"), dict):
+                result["performance"] = performance_payload(data["performance"], final=True)
+            json.dumps(result, allow_nan=False)
+        except (ResultNotReady, VideoBusy):
+            abort(404, description="This video hasn't been analyzed yet")
+        except (OSError, ValueError, KeyError, TypeError, IndexError, AttributeError, OverflowError, RecursionError):
+            return jsonify({"error": "Analysis results could not be read; analyze the video again"}), 500
+        return jsonify(result)
 
     return api

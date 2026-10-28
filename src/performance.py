@@ -9,6 +9,27 @@ import math
 import time
 
 
+def performance_payload(values, *, final=False):
+    """Normalize API measurements: unavailable/nonfinite values become null."""
+    fields = ("totalS", "avgFrameMs", "avgPoseMs", "avgLstmMs", "avgFps", "peakMemoryMb") if final else (
+        "frameMs", "poseMs", "lstmMs", "fps", "memoryMb"
+    )
+    values = values if isinstance(values, dict) else {}
+    result = {}
+    for field in fields:
+        value = values.get(field)
+        result[field] = value if (
+            isinstance(value, (int, float)) and not isinstance(value, bool)
+            and math.isfinite(value) and value >= 0
+        ) else None
+    if final:
+        for field in ("framesProcessed", "predictionCount"):
+            value = values.get(field)
+            if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+                result[field] = value
+    return result
+
+
 def _memory_reader():
     try:
         import psutil

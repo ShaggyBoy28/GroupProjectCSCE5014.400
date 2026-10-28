@@ -1,13 +1,12 @@
-import json
 import os
 import subprocess
-import time
 
 import cv2
 import ntpath
 from .utils import filter_persons, draw_keypoints
 from .lstm import WINDOW_SIZE
-from .performance import ProcessingPerformance
+from .performance import ProcessingPerformance, performance_payload
+from .results import ResultPublication
 
 import numpy as np
 import torch
@@ -37,17 +36,23 @@ def _synchronize_model(model):
 def probe_video(video_path):
     """Read basic metadata from a video file."""
     cap = cv2.VideoCapture(video_path)
-    fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
-    frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    info = {
-        "fps": round(fps, 2),
-        "frameCount": frame_count,
-        "width": int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
-        "height": int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)),
-        "durationS": round(frame_count / fps, 3) if fps else 0,
-    }
-    cap.release()
-    return info
+    try:
+        if not cap.isOpened():
+            raise ValueError("Could not open input video")
+        fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+        frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        info = {
+            "fps": round(fps, 2),
+            "frameCount": frame_count,
+            "width": int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
+            "height": int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)),
+            "durationS": round(frame_count / fps, 3) if fps else 0,
+        }
+        if info["width"] <= 0 or info["height"] <= 0:
+            raise ValueError("Invalid video dimensions")
+        return info
+    finally:
+        cap.release()
 
 
 def transcode_for_browser(src_path, dst_path):
@@ -66,80 +71,112 @@ def transcode_for_browser(src_path, dst_path):
     return subprocess.run(command, check=False).returncode == 0
 
 
-def analyse_video_events(pose_detector, lstm_classifier, video_path):
+def analyse_video_events(pose_detector, lstm_classifier, video_path, *,
+                         on_progress=None, on_complete=None):
     """Analyse a video for the React frontend.
 
     Yields progress events while it works, then writes next to the input:
       res_<name>.mp4   annotated video (H.264 when ffmpeg is available)
       res_<name>.json  every LSTM prediction with all 6 class probabilities
-    and finally yields {"type": "done"}.
+    and finally yields {"type": "done"}. Progress includes nullable metrics;
+    the JSON also stores final performance. totalS includes metadata probing,
+    decode, processing, encoding/release and H.264 transcoding, but excludes
+    sidecar publication/hashing, callbacks and time suspended at yield. Frame and
+    stage timing definitions match analyse_video(). Callbacks are optional;
+    on_complete runs after successful sidecar publication, before done.
     """
-    info = probe_video(video_path)
-    folder, file_name = os.path.split(os.path.abspath(video_path))
-    result_path = os.path.join(folder, 'res_{}'.format(file_name))
-    raw_path = os.path.join(folder, 'res_raw_{}'.format(file_name))
-    data_path = os.path.join(folder, 'res_{}.json'.format(os.path.splitext(file_name)[0]))
+    performance = ProcessingPerformance.for_process()
+    with ResultPublication(video_path) as publication:
+        info = probe_video(video_path)
+        folder, file_name = os.path.split(os.path.abspath(video_path))
+        raw_path = str(publication.raw_path)
+        result_path = str(publication.encoded_path)
 
-    cap = cv2.VideoCapture(video_path)
-    tot_frames = max(info["frameCount"], 1)
-    vid_writer = cv2.VideoWriter(raw_path, cv2.VideoWriter_fourcc(*'mp4v'), info["fps"],
-                                 (info["width"], info["height"]))
-    buffer_window = []
-    predictions = []
-    label = None
-    counter = 0
-    start = time.time()
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            break
-        img = frame.copy()
-        if counter % (SKIP_FRAME_COUNT + 1) == 0:
-            outputs = pose_detector(frame)
-            persons, _ = filter_persons(outputs)
-            if len(persons) >= 1:
-                # only the first person detected is analysed (same as the original app)
-                p = persons[0]
-                draw_keypoints(p, img)
-                features = []
-                for row in p:
-                    features.append(row[0])
-                    features.append(row[1])
-                if len(buffer_window) < WINDOW_SIZE:
-                    buffer_window.append(features)
-                else:
-                    model_input = torch.unsqueeze(torch.Tensor(np.array(buffer_window, dtype=np.float32)), dim=0)
-                    with torch.no_grad():
-                        prob = F.softmax(lstm_classifier(model_input), dim=1)[0]
-                    probabilities = [float(x) for x in prob]
-                    pred_index = int(np.argmax(probabilities))
-                    label = LABELS[pred_index]
-                    predictions.append({"frame": counter, "probabilities": probabilities})
-                    buffer_window.pop(0)
-                    buffer_window.append(features)
-        if label is not None:
-            cv2.putText(img, 'Action: {}'.format(label), (int(info["width"] - 400), info["height"] - 50),
-                        cv2.FONT_HERSHEY_COMPLEX, 0.9, (102, 255, 255), 2)
-        counter += 1
-        vid_writer.write(img)
-        yield {
-            "type": "progress",
-            "percent": min(int(counter * 100 / tot_frames), 100),
-            "frame": counter,
-            "totalFrames": info["frameCount"],
-            "label": label,
-        }
-    cap.release()
-    vid_writer.release()
+        cap = None
+        vid_writer = None
+        try:
+            cap = cv2.VideoCapture(video_path)
+            if not cap.isOpened():
+                raise ValueError("Could not open input video")
+            tot_frames = max(info["frameCount"], 1)
+            vid_writer = cv2.VideoWriter(raw_path, cv2.VideoWriter_fourcc(*'mp4v'), info["fps"],
+                                         (info["width"], info["height"]))
+            if not vid_writer.isOpened():
+                raise ValueError("Could not open output video writer")
+            buffer_window = []
+            predictions = []
+            label = None
+            counter = 0
+            while True:
+                frame_start = performance.begin_frame()
+                ret, frame = cap.read()
+                if not ret:
+                    break
+                img = frame.copy()
+                if counter % (SKIP_FRAME_COUNT + 1) == 0:
+                    with performance.measure("pose", lambda: _synchronize_model(getattr(pose_detector, "model", None))):
+                        outputs = pose_detector(frame)
+                        persons, _ = filter_persons(outputs)
+                    if len(persons) >= 1:
+                        # only the first person detected is analysed (same as the original app)
+                        p = persons[0]
+                        draw_keypoints(p, img)
+                        features = []
+                        for row in p:
+                            features.append(row[0])
+                            features.append(row[1])
+                        if len(buffer_window) < WINDOW_SIZE:
+                            buffer_window.append(features)
+                        else:
+                            model_input = torch.unsqueeze(torch.Tensor(np.array(buffer_window, dtype=np.float32)), dim=0)
+                            with performance.measure("lstm", lambda: _synchronize_model(lstm_classifier)):
+                                with torch.no_grad():
+                                    prob = F.softmax(lstm_classifier(model_input), dim=1)[0]
+                                probabilities = [float(x) for x in prob]
+                                pred_index = int(np.argmax(probabilities))
+                            label = LABELS[pred_index]
+                            predictions.append({"frame": counter, "probabilities": probabilities})
+                            buffer_window.pop(0)
+                            buffer_window.append(features)
+                if label is not None:
+                    cv2.putText(img, 'Action: {}'.format(label), (int(info["width"] - 400), info["height"] - 50),
+                                cv2.FONT_HERSHEY_COMPLEX, 0.9, (102, 255, 255), 2)
+                counter += 1
+                vid_writer.write(img)
+                live = performance_payload(performance.end_frame(frame_start))
+                event = {
+                    "type": "progress",
+                    "percent": min(int(counter * 100 / tot_frames), 100),
+                    "frame": counter,
+                    "totalFrames": info["frameCount"],
+                    "label": label,
+                    "metrics": live,
+                }
+                performance.pause()
+                try:
+                    if on_progress is not None:
+                        on_progress(live)
+                    yield event
+                finally:
+                    performance.resume()
+        finally:
+            try:
+                if cap is not None:
+                    cap.release()
+            finally:
+                if vid_writer is not None:
+                    vid_writer.release()
 
-    if transcode_for_browser(raw_path, result_path):
-        os.remove(raw_path)
-    else:
-        os.replace(raw_path, result_path)
-    with open(data_path, 'w', encoding='utf-8') as data_file:
-        json.dump({"video": {"name": file_name, **info}, "windowSize": WINDOW_SIZE,
-                   "predictions": predictions}, data_file)
-    print("Video processing finished in ", time.time() - start)
+        encoded = transcode_for_browser(raw_path, result_path)
+        performance.sample_memory()
+        performance.pause()
+        summary = performance_payload(performance.summary(), final=True)
+        publication.publish({"video": {"name": file_name, **info}, "windowSize": WINDOW_SIZE,
+                             "predictions": predictions, "performance": summary},
+                            result_path if encoded else raw_path)
+    print("Video processing finished in ", summary["totalS"])
+    if on_complete is not None:
+        on_complete(summary)
     yield {"type": "done"}
 
 

@@ -24,11 +24,11 @@ export interface VideoInfo extends VideoMetadata {
 
 /** (planned, extension 2) Live performance numbers for the latest frame. */
 export interface LiveMetrics {
-  frameMs: number; // total processing time for this frame
-  poseMs: number; // Detectron2 pose detection
+  frameMs: number | null; // total processing time for this frame
+  poseMs: number | null; // Detectron2 pose detection
   lstmMs: number | null; // LSTM inference (null before the first 32-frame window)
-  fps: number; // frames processed per second (rolling)
-  memoryMb: number; // backend process memory
+  fps: number | null; // frames processed per second (cumulative active throughput)
+  memoryMb: number | null; // backend process memory
 }
 
 export interface ProgressEvent {
@@ -93,12 +93,14 @@ export interface Smoothing {
 
 /** (planned, extension 2) Performance of this analysis run. */
 export interface RunPerformance {
-  totalS: number;
-  avgFrameMs: number;
-  avgPoseMs: number;
-  avgLstmMs: number;
-  avgFps: number;
-  peakMemoryMb: number;
+  totalS: number | null;
+  avgFrameMs: number | null;
+  avgPoseMs: number | null;
+  avgLstmMs: number | null;
+  avgFps: number | null;
+  peakMemoryMb: number | null;
+  framesProcessed?: number;
+  predictionCount?: number;
 }
 
 export interface Breakdown {

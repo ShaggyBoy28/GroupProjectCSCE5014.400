@@ -26,10 +26,14 @@ export function BreakdownView() {
   }
   if (breakdown.data.predictions.length === 0) {
     return (
-      <StatusMessage
-        title="No activity was detected."
-        message="The model needs one person, whole body in view, for at least 32 frames before it can label anything."
-      />
+      <div className="flex flex-col gap-7">
+        <StatusMessage
+          title="No activity was detected."
+          message="The model needs one person, whole body in view, for at least 32 frames before it can label anything."
+        />
+        {breakdown.data.performance && <PerformanceCard performance={breakdown.data.performance} />}
+        {modelMetrics && <ModelAccuracyCard metrics={modelMetrics} labels={model.status === 'ready' ? model.data.labels : []} />}
+      </div>
     );
   }
 

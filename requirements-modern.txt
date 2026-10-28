@@ -13,3 +13,5 @@ setuptools<81   # detectron2 still imports pkg_resources, removed in setuptools 
 wheel
 ninja
 imageio-ffmpeg   # bundled ffmpeg: re-encodes result videos as H.264 so browsers can play them
+scikit-learn   # standalone labeled classification evaluation
+psutil   # process RSS measurements; runtime gracefully handles unavailable memory

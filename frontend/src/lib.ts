@@ -40,11 +40,11 @@ export function getActivity(label: ActivityLabel): Activity {
 // ---------- Formatting ----------
 
 export const formatPercent = (fraction: number) => `${Math.round(fraction * 100)}%`;
-export const formatSeconds = (seconds: number) => `${seconds.toFixed(1)} s`;
+export const formatSeconds = (seconds: number | null | undefined) => seconds == null ? '—' : `${seconds.toFixed(1)} s`;
 export const formatTimeRange = (start: number, end: number) => `${start.toFixed(1)}–${end.toFixed(1)} s`;
-export const formatFps = (fps: number) => `${fps < 10 ? fps.toFixed(1) : Math.round(fps)} fps`;
-export const formatMs = (ms: number) => `${ms < 10 ? ms.toFixed(1) : Math.round(ms)} ms`;
-export const formatMb = (mb: number) => (mb >= 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${Math.round(mb)} MB`);
+export const formatFps = (fps: number | null | undefined) => fps == null ? '—' : `${fps < 10 ? fps.toFixed(1) : Math.round(fps)} fps`;
+export const formatMs = (ms: number | null | undefined) => ms == null ? '—' : `${ms < 10 ? ms.toFixed(1) : Math.round(ms)} ms`;
+export const formatMb = (mb: number | null | undefined) => mb == null ? '—' : (mb >= 1000 ? `${(mb / 1000).toFixed(1)} GB` : `${Math.round(mb)} MB`);
 export const formatResolution = (v: VideoMetadata) => `${v.width}×${v.height}`;
 
 /** "10.1 seconds · 304 frames · 30 fps" */
