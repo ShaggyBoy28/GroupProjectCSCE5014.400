@@ -8,18 +8,24 @@ from flask import render_template, Response, request, send_from_directory, flash
 from flask import current_app as app
 from werkzeug.utils import secure_filename
 
+from src.api import create_api_blueprint
 from src.lstm import ActionClassificationLSTM
-from src.video_analyzer import analyse_video, stream_video
+from src.video_analyzer import analyse_video, analyse_video_events, probe_video, stream_video
 
 # import some common Detectron2 utilities
 from detectron2 import model_zoo
 from detectron2.engine import DefaultPredictor
 from detectron2.config import get_cfg
 
-app = Flask(__name__)
+# static_folder=None: the built React app (frontend/dist) is served by the routes below
+app = Flask(__name__, static_folder=None)
 UPLOAD_FOLDER = './'
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
-app.secret_key = "secret key"
+# reject uploads larger than MAX_UPLOAD_MB (default 200 MB)
+app.config['MAX_CONTENT_LENGTH'] = int(os.environ.get("MAX_UPLOAD_MB", 200)) * 1024 * 1024
+app.secret_key = os.environ.get("FLASK_SECRET_KEY", "dev-only-secret")
+
+FRONTEND_DIST = os.path.join(os.path.dirname(os.path.abspath(__file__)), "frontend", "dist")
 
 
 start = time.time()
@@ -44,6 +50,21 @@ lstm_classifier = ActionClassificationLSTM.load_from_checkpoint(
 lstm_classifier.eval()
 
 
+class AnalysisServices:
+    """Connects the JSON API (src/api.py) to the loaded models."""
+
+    @staticmethod
+    def probe(path):
+        return probe_video(path)
+
+    @staticmethod
+    def analyze(path):
+        return analyse_video_events(pose_detector, lstm_classifier, path)
+
+
+app.register_blueprint(create_api_blueprint(AnalysisServices, UPLOAD_FOLDER))
+
+
 class DataObject():
     pass
 
@@ -61,8 +82,30 @@ def cleanString(v: str):
     return out_str
 
 
+# React frontend: build it with `npm run build` in frontend/.
+# Client-side routes (/analyzing/..., /results/...) all return index.html.
 @app.route('/', methods=['GET'])
-def index():
+@app.route('/analyzing/<path:_>', methods=['GET'])
+@app.route('/results/<path:_>', methods=['GET'])
+def index(_=None):
+    if os.path.isfile(os.path.join(FRONTEND_DIST, "index.html")):
+        return send_from_directory(FRONTEND_DIST, "index.html")
+    return legacy_index()
+
+
+@app.route('/assets/<path:filename>')
+def frontend_assets(filename):
+    return send_from_directory(os.path.join(FRONTEND_DIST, "assets"), filename)
+
+
+@app.route('/favicon.svg')
+def favicon():
+    return send_from_directory(FRONTEND_DIST, "favicon.svg")
+
+
+# Original Bootstrap/jQuery page, kept for comparison.
+@app.route('/legacy', methods=['GET'])
+def legacy_index():
     obj = DataObject
     obj.video = "sample_video.mp4"
     return render_template('/index.html', obj=obj)

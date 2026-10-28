@@ -10,7 +10,7 @@ DETECTRON2_COMMIT=a2f4a8771ab77e8411c26b27f24f9489a28a2453   # the Detectron2 ve
 OS="$(uname -s)"
 ARCH="$(uname -m)"
 
-echo "==> 1/5 Checking build tools (Detectron2 is compiled from source)"
+echo "==> 1/6 Checking build tools (Detectron2 is compiled from source)"
 if [ "$OS" = "Darwin" ]; then
   if [ "$ARCH" != "arm64" ]; then
     echo "Intel Macs are not supported: current PyTorch releases only ship Apple Silicon wheels for macOS."
@@ -34,18 +34,18 @@ else
   fi
 fi
 
-echo "==> 2/5 Checking for uv (installs Python and packages)"
+echo "==> 2/6 Checking for uv (installs Python and packages)"
 if ! command -v uv >/dev/null 2>&1; then
   curl -LsSf https://astral.sh/uv/install.sh | sh
   export PATH="$HOME/.local/bin:$PATH"
 fi
 
-echo "==> 3/5 Creating .venv with Python 3.11"
+echo "==> 3/6 Creating .venv with Python 3.11"
 uv venv --python 3.11 --allow-existing .venv
 # shellcheck disable=SC1091
 source .venv/bin/activate
 
-echo "==> 4/5 Installing Python packages"
+echo "==> 4/6 Installing Python packages"
 if [ "$OS" = "Linux" ]; then
   # CPU-only PyTorch: a ~200 MB download instead of several GB of CUDA libraries.
   uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu \
@@ -53,7 +53,7 @@ if [ "$OS" = "Linux" ]; then
 fi
 uv pip install -r requirements-modern.txt
 
-echo "==> 5/5 Building Detectron2 (takes 3-10 minutes)"
+echo "==> 5/6 Building Detectron2 (takes 3-10 minutes)"
 if python -c "import detectron2" >/dev/null 2>&1; then
   echo "Detectron2 already installed, skipping."
 else
@@ -62,5 +62,17 @@ else
 fi
 
 python -c "import torch, detectron2, cv2, flask, pytorch_lightning as pl; print('OK  torch', torch.__version__, '| detectron2', detectron2.__version__, '| opencv', cv2.__version__, '| lightning', pl.__version__)"
+echo "==> 6/6 Building the React frontend (needs Node.js 20.19+)"
+if command -v node >/dev/null 2>&1 && node -e 'const [a,b]=process.versions.node.split(".").map(Number); process.exit(a>20||(a===20&&b>=19)?0:1)'; then
+  (cd frontend && npm ci && npm run build) || echo "Frontend build failed; the app will use the existing frontend/dist if there is one."
+else
+  echo "Node.js 20.19+ not found (have: $(node -v 2>/dev/null || echo none)). Skipping the frontend build."
+  if [ -f frontend/dist/index.html ]; then
+    echo "Using the existing build in frontend/dist."
+  else
+    echo "Until you install Node.js 20.19+ (https://nodejs.org) and run 'cd frontend && npm ci && npm run build', the app serves the original page."
+  fi
+fi
+
 echo
 echo "Setup complete. Start the app with:  bash run.sh"
