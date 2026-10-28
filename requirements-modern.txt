@@ -12,3 +12,4 @@ opencv-python-headless   # no GUI needed; avoids the libGL dependency on Linux/W
 setuptools<81   # detectron2 still imports pkg_resources, removed in setuptools 81
 wheel
 ninja
+imageio-ffmpeg   # bundled ffmpeg: re-encodes result videos as H.264 so browsers can play them
