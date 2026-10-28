@@ -10,6 +10,9 @@ Errors from the video API are JSON: `{"error": "message"}` with the matching HTT
 |---|---|---|
 | GET | `/api/model` | Model labels, window size and verified evaluation metrics (otherwise `metrics: null`) |
 | GET | `/api/health` | `{"status": "ok"}` |
+| POST | `/api/live/sessions` | Start a live classification session; `201 {"sessionId": "...", "windowSize": 32}` |
+| POST | `/api/live/sessions/<sessionId>/frames` | Classify one JPEG camera frame |
+| DELETE | `/api/live/sessions/<sessionId>` | Stop and release a live classification session |
 | GET | `/api/sample` | Video info for `sample_video.mp4` |
 | POST | `/api/videos` | Upload: multipart field `video` (`.mp4`, max `MAX_UPLOAD_MB`, default 200). `201 {"name": "<saved name>"}` |
 | GET | `/api/videos/<name>` | Video info |
@@ -17,6 +20,12 @@ Errors from the video API are JSON: `{"error": "message"}` with the matching HTT
 | GET | `/api/videos/<name>/analyze` | Runs the analysis; server-sent events (see below) |
 | GET | `/api/videos/<name>/result` | Annotated result video (`?download=1` to download) |
 | GET | `/api/videos/<name>/breakdown` | Activity Breakdown data |
+
+## Live camera classification
+
+The React **Live activity classification** page requests camera access only after the user starts it. It scales frames to at most 640 pixels wide, sends them sequentially as `image/jpeg` requests, and does not create or save a recording. The Flask server performs Detectron2 pose detection and LSTM inference. The initial result appears after 32 person detections have filled the pose window and another pose arrives; frames without a detected person do not fill the window.
+
+Start a session with `POST /api/live/sessions`. Send JPEG bytes with `Content-Type: image/jpeg` to `POST /api/live/sessions/<sessionId>/frames`; each response contains `framesSeen`, `posesBuffered`, `personDetected`, and nullable `label`/`confidence`. Stop with `DELETE /api/live/sessions/<sessionId>`. Frames are limited to 2 MB and 1920 pixels per dimension; the server allows at most four active sessions, expiring idle sessions after ten minutes. Use localhost or HTTPS for browser camera permissions.
 
 `/result` and `/breakdown` return 404 until a complete result for the current input is available. Both endpoints use the same completion record. Replacing an upload invalidates that record before replacing the input, so old predictions and performance cannot be reused for the new video. The success response remains `201 {"name": "..."}`. A conflicting upload returns JSON status 409; a filesystem upload failure returns generic JSON status 500.
 

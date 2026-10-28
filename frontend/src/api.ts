@@ -136,6 +136,14 @@ export interface ModelInfo {
   metrics?: ModelMetrics | null;
 }
 
+export interface LiveFrameResult {
+  framesSeen: number;
+  posesBuffered: number;
+  personDetected: boolean;
+  label: ActivityLabel | null;
+  confidence: number | null;
+}
+
 /** Used until the backend serves GET /api/model. */
 export const DEFAULT_MODEL: ModelInfo = {
   labels: ['JUMPING', 'JUMPING_JACKS', 'BOXING', 'WAVING_2HANDS', 'WAVING_1HAND', 'CLAPPING_HANDS'],
@@ -168,6 +176,16 @@ export const api = {
     form.append('video', file);
     return request<{ name: string }>('/videos', { method: 'POST', body: form });
   },
+
+  startLiveSession: () => request<{ sessionId: string; windowSize: number }>('/live/sessions', { method: 'POST' }),
+  classifyLiveFrame: (sessionId: string, frame: Blob) =>
+    request<LiveFrameResult>(`/live/sessions/${encodeURIComponent(sessionId)}/frames`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'image/jpeg' },
+      body: frame,
+    }),
+  stopLiveSession: (sessionId: string) =>
+    request<void>(`/live/sessions/${encodeURIComponent(sessionId)}`, { method: 'DELETE' }),
 
   videoFileUrl: (name: string) => `/api${videoPath(name)}/file`,
   resultVideoUrl: (name: string, download = false) =>

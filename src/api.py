@@ -15,11 +15,12 @@ import os
 import tempfile
 import math
 
-from flask import Blueprint, Response, abort, jsonify, request, send_from_directory, stream_with_context
+from flask import Blueprint, Response, abort, current_app, jsonify, request, send_from_directory, stream_with_context
 from werkzeug.utils import secure_filename
 from .performance import performance_payload
 from .results import read_result, video_operation, invalidate_result, ResultNotReady, VideoBusy
 from .evaluation import validate_metrics
+from .live_errors import LiveSessionLimitError
 
 # ---------- Activity Breakdown ----------
 
@@ -167,6 +168,10 @@ def _is_allowed(filename):
 def create_api_blueprint(services, video_folder, *, window_size=32):
     api = Blueprint("api", __name__, url_prefix="/api")
     video_folder = os.path.abspath(video_folder)
+    max_live_frame_bytes = 2 * 1024 * 1024
+
+    def valid_live_session_id(session_id):
+        return len(session_id) == 32 and all(character in "0123456789abcdef" for character in session_id)
 
     def video_path(name):
         """Resolve a video name to a file in the video folder, or 404."""
@@ -184,6 +189,8 @@ def create_api_blueprint(services, video_folder, *, window_size=32):
     @api.errorhandler(404)
     @api.errorhandler(400)
     @api.errorhandler(413)
+    @api.errorhandler(415)
+    @api.errorhandler(422)
     def json_error(error):
         return jsonify({"error": error.description}), error.code
 
@@ -202,6 +209,54 @@ def create_api_blueprint(services, video_folder, *, window_size=32):
         except (OSError, ValueError, KeyError, TypeError, AttributeError, OverflowError, RecursionError):
             metrics = None
         return jsonify({"labels": LABELS, "windowSize": window_size, "metrics": metrics})
+
+    @api.post("/live/sessions")
+    def start_live_session():
+        try:
+            session_id = services.start_live_session()
+        except LiveSessionLimitError as error:
+            return jsonify({"error": str(error)}), 429
+        except Exception:
+            current_app.logger.exception("Could not start live classification session")
+            return jsonify({"error": "Could not start live classification."}), 500
+        return jsonify({"sessionId": session_id, "windowSize": window_size}), 201
+
+    @api.post("/live/sessions/<session_id>/frames")
+    def classify_live_frame(session_id):
+        if not valid_live_session_id(session_id):
+            abort(404, description="Live session not found")
+        if request.mimetype != "image/jpeg":
+            abort(415, description="Live frames must be JPEG images")
+        if request.content_length is not None and request.content_length > max_live_frame_bytes:
+            abort(413, description="Live frame exceeds the 2 MB limit")
+        frame = request.get_data(cache=False)
+        if not frame:
+            abort(400, description="Live frame is empty")
+        if len(frame) > max_live_frame_bytes:
+            abort(413, description="Live frame exceeds the 2 MB limit")
+        try:
+            result = services.classify_live_frame(session_id, frame)
+        except KeyError:
+            abort(404, description="Live session not found or expired")
+        except ValueError as error:
+            abort(422, description=str(error))
+        except Exception:
+            current_app.logger.exception("Live frame classification failed")
+            return jsonify({"error": "Could not classify this camera frame."}), 500
+        return jsonify(result)
+
+    @api.delete("/live/sessions/<session_id>")
+    def stop_live_session(session_id):
+        if not valid_live_session_id(session_id):
+            abort(404, description="Live session not found")
+        try:
+            stopped = services.stop_live_session(session_id)
+        except Exception:
+            current_app.logger.exception("Could not stop live classification session")
+            return jsonify({"error": "Could not stop live classification."}), 500
+        if not stopped:
+            abort(404, description="Live session not found or expired")
+        return "", 204
 
     @api.get("/sample")
     def sample():

@@ -135,7 +135,7 @@ Then open <http://127.0.0.1:5001>. On Linux, `setup.sh` installs the CPU-only Py
 
 ## Using the app
 
-1. **Home:** choose an `.mp4` and click **Analyze**, or click **Analyze sample**.
+1. **Home:** choose an `.mp4` and click **Analyze**, click **Analyze sample**, or choose **Start live camera** for predictions from your webcam.
 2. **Analyzing:** shows the video, the percentage, frames analyzed and the current label. It runs on the CPU, so expect a few minutes for the 10-second sample. Keep the page open; the results open automatically.
 3. **Result video:** the annotated video with the skeleton and `Action: …` label, plus length, frames, frame rate and resolution. **Download video** saves it.
 4. **Activity breakdown** (tab next to Result video): summary cards, timeline, confidence over time, time per activity and segments.
@@ -143,6 +143,8 @@ Then open <http://127.0.0.1:5001>. On Linux, `setup.sh` installs the CPU-only Py
 The original page is still available at <http://127.0.0.1:5001/legacy>.
 
 Stop the app with **Ctrl+C** in the terminal.
+
+Live camera classification requires camera permission and a secure browser context (localhost or HTTPS). Camera frames are sent to the app server for inference; the live flow does not save a recording.
 
 **What to expect from the output:**
 - **No label for the first ~1 second:** the model needs 32 frames of poses before its first prediction.
@@ -180,6 +182,19 @@ Stop the app with **Ctrl+C** in the terminal.
     └── ORIGINAL_README.md      # upstream README
 ```
 
+## Training the LSTM
+
+After running `bash setup.sh`, activate the project environment and start training from the repository root:
+
+```bash
+source .venv/bin/activate
+python -m src.train -d ./RNN-HAR-2D-Pose-database
+```
+
+The script trains for up to 400 epochs by default, stopping early when validation loss stops improving. It saves the best checkpoint to `models/saved_model.ckpt`, which is the checkpoint loaded by the app. You can adjust the run with `--epochs`, `--batch_size`, and `--learning_rate`.
+
+The current dataset provides `X_train.txt`/`Y_train.txt` and `X_test.txt`/`Y_test.txt`; the training script uses the latter pair as its per-epoch validation data and to select the best checkpoint. It does not provide a separate final test run, so treat those validation scores as model-selection results rather than an independent test estimate.
+
 ---
 
 ## Development
@@ -207,6 +222,7 @@ The upstream app doesn't run on current machines as-is. We made these changes:
 | `requirements.txt` pins 2021 packages (e.g., `torch 1.13`, `opencv 4.2`) that don't install on Apple Silicon or Python 3.10+; its Flask and Werkzeug pins also conflict with each other | New `requirements-modern.txt`; the original file is kept for reference | `requirements-modern.txt` |
 | Detectron2 isn't listed at all | Setup scripts build it from source at a pinned, tested commit | `setup.sh`, `setup_windows.ps1` |
 | Detectron2 still imports `pkg_resources`, which `setuptools` 81 removed | Pin `setuptools<81` | `requirements-modern.txt` |
+| PyTorch Lightning 2 removed APIs used by the original trainer | Use Lightning 2 trainer options and epoch-level metric logging | `src/train.py`, `src/lstm.py` |
 | Detectron2 defaults to an NVIDIA GPU (CUDA) | Use the CPU when no GPU is available | `app.py` |
 | PyTorch 2.6+ refuses to load the 2021 checkpoint by default | Load it with `weights_only=False`, `map_location="cpu"` | `app.py` |
 | Newer OpenCV rejects tensor coordinates when drawing the skeleton | Convert keypoints to plain integers | `src/utils.py` |
@@ -221,7 +237,7 @@ The upstream app doesn't run on current machines as-is. We made these changes:
 - **JSON API** (`src/api.py`, [docs/API.md](docs/API.md)) with live progress over server-sent events.
 - **Breakdown data** (`src/api.py`): the analysis now keeps all 6 class probabilities for every prediction and turns them into segments and summary statistics.
 
-The model, training code and original template are otherwise unchanged. Generated `__pycache__` files from the upstream repo were left out.
+The original research notebooks and legacy template are retained. The Python training entry point and LSTM hooks have been updated for PyTorch Lightning 2.
 
 ---
 
