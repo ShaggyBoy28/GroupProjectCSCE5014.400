@@ -1,0 +1,109 @@
+---
+title: Human Activity Detection - User Experience
+config:
+  theme: base
+  themeVariables:
+    fontFamily: Segoe UI, Arial, sans-serif
+    fontSize: 18px
+    primaryTextColor: '#172033'
+    lineColor: '#64748b'
+    edgeLabelBackground: '#ffffff'
+  flowchart:
+    htmlLabels: false
+    curve: linear
+    nodeSpacing: 30
+    rankSpacing: 42
+---
+flowchart TD
+    OPEN("User opens application") --> HOME("View home page")
+
+    subgraph INPUT["1. Choose and submit a video"]
+        SOURCE{"Use your own video?"}
+        CHOOSE("Choose file...")
+        VALID{"MP4 file selected?"}
+        INVALID("Analyze disabled; choose a file<br/>Non-MP4: show MP4-only message")
+        SUBMIT("Click Analyze<br/>Show Uploading...")
+        UPLOADED{"Upload succeeded?"}
+        UPLOAD_ERROR("Show upload error on home page<br/>Retry Analyze or choose another file")
+        SAMPLE("Click Analyze sample")
+        SOURCE -->|Yes| CHOOSE --> VALID
+        SOURCE -->|No| SAMPLE
+        VALID -->|No| INVALID --> CHOOSE
+        VALID -->|Yes| SUBMIT --> UPLOADED
+        UPLOADED -->|No| UPLOAD_ERROR
+        UPLOAD_ERROR -->|Retry same file| SUBMIT
+        UPLOAD_ERROR -->|Choose another| CHOOSE
+    end
+    HOME --> SOURCE
+
+    subgraph ANALYSIS["2. Follow the analysis"]
+        PROGRESS("Analysis starts automatically<br/>Watch input video and progress<br/>Frames, current label, live performance")
+        SUCCESS{"Analysis completed successfully?"}
+        STOPPED("The analysis stopped.<br/>Show processing or connection error")
+        PROGRESS -->|Keep page open; wait| SUCCESS
+        SUCCESS -->|No| STOPPED
+    end
+    UPLOADED -->|Yes| PROGRESS
+    SAMPLE --> PROGRESS
+
+    subgraph RESULTS["3. Explore results"]
+        LOAD("Results open automatically<br/>Loading results...")
+        LOADED{"Results loaded?"}
+        LOAD_ERROR("We couldn't load this video.<br/>Show error")
+        READY{"Video analyzed?"}
+        NOT_READY("This video hasn't been analyzed yet.<br/>Click Analyze it now")
+        WATCH("Result video<br/>Play annotated video with activity labels<br/>View length, frames, frame rate, resolution")
+        DETAILS{"View Activity breakdown?"}
+        BREAKDOWN("Click Activity breakdown<br/>Loading breakdown...")
+        DETAIL_OK{"Breakdown loaded?"}
+        DETAIL_ERROR("We couldn't load the breakdown.<br/>Show error")
+        DETECTED{"Any activity detected?"}
+        CHARTS("View main activity and confidence<br/>Timeline, confidence graph,<br/>time per activity and segments")
+        EMPTY("No activity was detected.<br/>Show guidance for a suitable clip")
+        PERFORMANCE("View Performance when available<br/>Processing time, throughput, memory")
+        LOAD --> LOADED
+        LOADED -->|No| LOAD_ERROR
+        LOADED -->|Yes| READY
+        READY -->|No| NOT_READY
+        READY -->|Yes| WATCH --> DETAILS
+        DETAILS -->|Yes| BREAKDOWN --> DETAIL_OK
+        DETAIL_OK -->|No| DETAIL_ERROR
+        DETAIL_OK -->|Yes| DETECTED
+        DETECTED -->|Yes| CHARTS --> PERFORMANCE
+        DETECTED -->|No| EMPTY --> PERFORMANCE
+    end
+    SUCCESS -->|Yes| LOAD
+    NOT_READY --> PROGRESS
+
+    subgraph NAV["4. Download or start again"]
+        DOWNLOAD{"Download video?"}
+        SAVE("Click Download video<br/>Save annotated MP4")
+        ANOTHER{"Analyze another video?"}
+        BACK("Click Analyze another<br/>or Back to home / Home")
+        STAY("Continue viewing results")
+        DOWNLOAD -->|Yes| SAVE --> ANOTHER
+        DOWNLOAD -->|No| ANOTHER
+        ANOTHER -->|Yes| BACK
+        ANOTHER -->|No| STAY
+    end
+    DETAILS -->|No| DOWNLOAD
+    PERFORMANCE --> DOWNLOAD
+    DETAIL_ERROR -->|Result video tab| WATCH
+    DETAIL_ERROR -->|Back to home| BACK
+    LOAD_ERROR -->|Back to home| BACK
+    STOPPED -->|Back to home| BACK
+    STAY -->|Result video tab| WATCH
+    BACK --> HOME
+
+    classDef action fill:#eff6ff,stroke:#3b82f6,color:#172033,stroke-width:1.5px;
+    classDef decision fill:#fff8e6,stroke:#c68a16,color:#172033,stroke-width:1.5px;
+    classDef error fill:#fff1f2,stroke:#dc5668,color:#821c32,stroke-width:1.5px;
+    classDef result fill:#ecfdf5,stroke:#27956a,color:#163c30,stroke-width:1.5px;
+    class OPEN,HOME,CHOOSE,SUBMIT,SAMPLE,PROGRESS,LOAD,NOT_READY,BREAKDOWN,SAVE,BACK,STAY action;
+    class SOURCE,VALID,UPLOADED,SUCCESS,LOADED,READY,DETAILS,DETAIL_OK,DETECTED,DOWNLOAD,ANOTHER decision;
+    class INVALID,UPLOAD_ERROR,STOPPED,LOAD_ERROR,DETAIL_ERROR,EMPTY error;
+    class WATCH,CHARTS,PERFORMANCE result;
+    style INPUT fill:#f8fafc,stroke:#cbd5e1
+    style ANALYSIS fill:#f8fafc,stroke:#cbd5e1
+    style RESULTS fill:#f8fafc,stroke:#cbd5e1
+    style NAV fill:#f8fafc,stroke:#cbd5e1
