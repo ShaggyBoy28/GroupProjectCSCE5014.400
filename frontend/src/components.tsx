@@ -14,9 +14,14 @@ export function AppHeader() {
           <img src={logoUrl} width={22} height={22} alt="" />
           <span className="text-[14.6px] font-semibold tracking-[-0.15px]">Activity Detection</span>
         </Link>
-        <Link to="/" className="text-[13px] hover:text-accent">
-          New analysis
-        </Link>
+        <div className="flex items-center gap-5">
+          <Link to="/dataset" className="text-[13px] hover:text-accent">
+            Dataset
+          </Link>
+          <Link to="/" className="text-[13px] hover:text-accent">
+            New analysis
+          </Link>
+        </div>
       </nav>
     </header>
   );

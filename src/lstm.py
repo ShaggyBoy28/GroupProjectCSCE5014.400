@@ -94,51 +94,49 @@ class PoseDataModule(pl.LightningDataModule):
 
 
 class ActionClassificationLSTM(pl.LightningModule):
-    def __init__(self, input_features, hidden_dim, learning_rate=0.001):
+    """LSTM over 32-frame windows of 17 keypoints (34 values per frame).
+
+    Ported to PyTorch Lightning 2.x. Hyperparameters stay compatible with the shipped checkpoint
+    (input_features=34, hidden_dim=50, learning_rate=1e-4); the new ones have defaults that match it.
+
+    num_classes:  number of activities (6 for the shipped model; more after extending the dataset)
+    class_names:  activity names in output order, saved in the checkpoint so the app can read them
+    lr_monitor:   metric that drives the learning-rate scheduler. The original training used "val_loss";
+                  cross-validation uses "train_loss" so the held-out fold never influences training.
+    """
+
+    def __init__(self, input_features, hidden_dim, learning_rate=0.001, num_classes=TOT_ACTION_CLASSES,
+                 class_names=None, lr_monitor="val_loss"):
         super().__init__()
         self.save_hyperparameters()
         self.lstm = nn.LSTM(input_features, hidden_dim, batch_first=True)
-        self.linear = nn.Linear(hidden_dim, TOT_ACTION_CLASSES)
+        self.linear = nn.Linear(hidden_dim, num_classes)
 
     def forward(self, x):
         _, (ht, _) = self.lstm(x)
         return self.linear(ht[-1])
 
-    def training_step(self, batch, batch_idx):
+    def _step(self, batch, stage):
         x, y = batch
         y = y.reshape(-1).long()
-        y_pred = self(x)
-        loss = F.cross_entropy(y_pred, y)
-        accuracy = (y_pred.argmax(dim=1) == y).float().mean()
-        self.log('train_loss', loss, on_step=False, on_epoch=True, prog_bar=True)
-        self.log('train_acc', accuracy, on_step=False, on_epoch=True, prog_bar=True)
+        logits = self(x)
+        loss = F.cross_entropy(logits, y)
+        acc = (logits.argmax(dim=1) == y).float().mean()
+        # on_epoch=True averages over the epoch (replaces the removed *_epoch_end hooks)
+        self.log(f"{stage}_loss", loss, on_step=False, on_epoch=True, prog_bar=True)
+        self.log(f"{stage}_acc", acc, on_step=False, on_epoch=True, prog_bar=True)
         return loss
 
+    def training_step(self, batch, batch_idx):
+        return self._step(batch, "train")
+
     def validation_step(self, batch, batch_idx):
-        x, y = batch
-        y = y.reshape(-1).long()
-        y_pred = self(x)
-        loss = F.cross_entropy(y_pred, y)
-        accuracy = (y_pred.argmax(dim=1) == y).float().mean()
-        self.log('val_loss', loss, on_step=False, on_epoch=True, prog_bar=True)
-        self.log('val_acc', accuracy, on_step=False, on_epoch=True, prog_bar=True)
-        return loss
+        return self._step(batch, "val")
 
     def configure_optimizers(self):
         optimizer = optim.Adam(self.parameters(), lr=self.hparams.learning_rate)
-        scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer,
-            mode='min',
-            factor=0.5,
-            patience=10,
-            min_lr=1e-15,
-        )
-        return {
-            "optimizer": optimizer,
-            "lr_scheduler": {
-                "scheduler": scheduler,
-                "interval": "epoch",
-                "frequency": 1,
-                "monitor": "val_loss",
-            },
-        }
+        # halve the learning rate when the monitored loss stops improving
+        scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=10, min_lr=1e-15)
+        return {"optimizer": optimizer,
+                "lr_scheduler": {"scheduler": scheduler, "interval": "epoch", "frequency": 1,
+                                 "monitor": self.hparams.lr_monitor}}

@@ -9,9 +9,13 @@ res_*.json
 *.mp4
 !sample_video.mp4
 
+# Datasets (download separately, see README)
+data/
+
 # Setup logs and training output
 setup.log
 run.log
+evaluate.log
 start.command
 lightning_logs/
 
@@ -24,3 +28,6 @@ Thumbs.db
 # React frontend
 frontend/node_modules/
 frontend/dist/
+
+# Training outputs (scripts/train_model.py)
+models/training/
