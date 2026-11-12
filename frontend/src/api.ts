@@ -143,6 +143,56 @@ export const DEFAULT_MODEL: ModelInfo = {
   metrics: null,
 };
 
+// ---------- Dataset page (expanding the dataset) ----------
+
+export interface DatasetClip {
+  id: string;
+  activity: ActivityLabel;
+  person: string;
+  environment: string;
+  take: string;
+  file: string;
+  poseFrames: number | null;
+  /** 32-frame training windows this clip gives (0 = too short). */
+  windows: number | null;
+  framesNoPerson: number | null;
+  framesUsed: number | null;
+  durationS: number | null;
+}
+
+export interface DatasetJob {
+  id: number;
+  clipId: string;
+  file: string;
+  activity: ActivityLabel;
+  person: string;
+  environment: string;
+  status: 'queued' | 'processing' | 'done' | 'error';
+  framesDone: number;
+  framesTotal: number;
+  windows?: number;
+  error: string | null;
+}
+
+export interface DatasetClassTotal {
+  label: ActivityLabel;
+  /** True when the loaded model already knows this class. */
+  inModel: boolean;
+  clips: number;
+  people: number;
+  windows: number;
+}
+
+export interface DatasetOverview {
+  activities: ActivityLabel[];
+  clips: DatasetClip[];
+  jobs: DatasetJob[];
+  summary: { clips: number; people: number; environments: number; windows: number; perClass: DatasetClassTotal[] };
+  people: string[];
+  environments: string[];
+  indexPath: string;
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`/api${path}`, init);
   const body = await response.json().catch(() => null);
@@ -168,6 +218,19 @@ export const api = {
     form.append('video', file);
     return request<{ name: string }>('/videos', { method: 'POST', body: form });
   },
+
+  getDataset: () => request<DatasetOverview>('/dataset'),
+  addDatasetClip: (video: File, person: string, activity: string, environment: string) => {
+    const form = new FormData();
+    form.append('video', video);
+    form.append('person', person);
+    form.append('activity', activity);
+    form.append('environment', environment);
+    return request<DatasetJob>('/dataset/clips', { method: 'POST', body: form });
+  },
+  deleteDatasetClip: (id: string) =>
+    request<{ deleted: string }>(`/dataset/clips/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  datasetPreviewUrl: (id: string) => `/api/dataset/clips/${encodeURIComponent(id)}/preview`,
 
   videoFileUrl: (name: string) => `/api${videoPath(name)}/file`,
   resultVideoUrl: (name: string, download = false) =>

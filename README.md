@@ -150,6 +150,14 @@ Stop the app with **Ctrl+C** in the terminal.
 - **Only the first person detected** in each frame is analyzed.
 - **Results** are saved as `res_<name>.mp4` (video) and `res_<name>.json` (predictions) in the project folder. They're ignored by git.
 
+**Model accuracy card (optional):** the breakdown page can show the model's accuracy, precision, recall, F1 and confusion matrix on the labeled dataset.
+
+1. Download `RNN-HAR-2D-Pose-database.zip` (~19 MB, link in `lstm_train.ipynb`) into a `data/` folder in the project.
+2. Run once: `source .venv/bin/activate && python scripts/evaluate_model.py`. It writes `models/evaluation.json`.
+3. Restart the app (`bash run.sh` picks the file up automatically).
+
+These scores come from the split the original training used for validation, so treat them as validation scores.
+
 ---
 
 ## Project structure

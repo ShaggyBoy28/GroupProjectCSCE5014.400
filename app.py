@@ -8,7 +8,8 @@ from flask import render_template, Response, request, send_from_directory, flash
 from flask import current_app as app
 from werkzeug.utils import secure_filename
 
-from src.api import create_api_blueprint
+from src.api import LABELS as API_LABELS, create_api_blueprint
+from src.dataset_api import create_dataset_blueprint
 from src.evaluation import load_evaluation
 from src.lstm import ActionClassificationLSTM, WINDOW_SIZE
 from src.video_analyzer import LABELS, analyse_video, analyse_video_events, probe_video, stream_video
@@ -46,9 +47,16 @@ model_load_done = time.time()
 print("Detectron model loaded in ", model_load_done - start)
 
 # Load pretrained LSTM model from checkpoint file
+# MODEL_CHECKPOINT can point at a retrained model (scripts/train_model.py final → models/training/final.ckpt)
+MODEL_CHECKPOINT = os.environ.get("MODEL_CHECKPOINT", "models/saved_model.ckpt")
 lstm_classifier = ActionClassificationLSTM.load_from_checkpoint(
-    "models/saved_model.ckpt", map_location="cpu", weights_only=False)
+    MODEL_CHECKPOINT, map_location="cpu", weights_only=False)
 lstm_classifier.eval()
+# Models trained with added classes store their class names; show those instead of the original six.
+if lstm_classifier.hparams.get("class_names"):
+    LABELS.clear()
+    LABELS.update(enumerate(lstm_classifier.hparams.class_names))
+    API_LABELS[:] = list(lstm_classifier.hparams.class_names)
 
 
 class AnalysisServices:
@@ -66,7 +74,7 @@ class AnalysisServices:
     def model_metrics():
         try:
             return load_evaluation(
-                os.environ.get("MODEL_EVALUATION_PATH"), "models/saved_model.ckpt",
+                os.environ.get("MODEL_EVALUATION_PATH"), MODEL_CHECKPOINT,
                 list(LABELS.values()), WINDOW_SIZE,
             )
         except (OSError, ValueError, KeyError, TypeError, AttributeError, OverflowError, RecursionError):
@@ -75,6 +83,8 @@ class AnalysisServices:
 
 
 app.register_blueprint(create_api_blueprint(AnalysisServices, UPLOAD_FOLDER, window_size=WINDOW_SIZE))
+# Dataset page: upload recordings and extract poses for training (docs/DATASET_EXPANSION.md)
+app.register_blueprint(create_dataset_blueprint(lambda: pose_detector, lambda: list(LABELS.values())))
 
 
 class DataObject():
@@ -99,6 +109,7 @@ def cleanString(v: str):
 @app.route('/', methods=['GET'])
 @app.route('/analyzing/<path:_>', methods=['GET'])
 @app.route('/results/<path:_>', methods=['GET'])
+@app.route('/dataset', methods=['GET'])
 def index(_=None):
     if os.path.isfile(os.path.join(FRONTEND_DIST, "index.html")):
         return send_from_directory(FRONTEND_DIST, "index.html")

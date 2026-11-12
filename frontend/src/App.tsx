@@ -3,6 +3,7 @@ import { Outlet, Route, Routes } from 'react-router-dom';
 import { AppHeader, Page, StatusMessage } from './components';
 import { AnalyzingPage } from './pages/AnalyzingPage';
 import { BreakdownView } from './pages/BreakdownPage';
+import { DatasetPage } from './pages/DatasetPage';
 import { HomePage } from './pages/HomePage';
 import { ResultsLayout, ResultVideoView } from './pages/ResultsPage';
 
@@ -19,6 +20,7 @@ export function App() {
       >
         <Route index element={<HomePage />} />
         <Route path="analyzing/:video" element={<AnalyzingPage />} />
+        <Route path="dataset" element={<DatasetPage />} />
         <Route path="results/:video" element={<ResultsLayout />}>
           <Route index element={<ResultVideoView />} />
           <Route path="breakdown" element={<BreakdownView />} />

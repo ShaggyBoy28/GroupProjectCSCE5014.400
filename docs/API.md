@@ -170,7 +170,9 @@ Related React types and formatters accept nullable measurements and display `—
 }
 ```
 
-No evaluation or training runs inside this request. Uploaded-video confidence is never treated as accuracy. Genuine labeled evaluation is still required; no evaluation artifact is shipped or created by this integration.
+No evaluation or training runs inside this request. Uploaded-video confidence is never treated as accuracy.
+
+To create the artifact, download `RNN-HAR-2D-Pose-database.zip` (link in `lstm_train.ipynb`) into `data/` and run `python scripts/evaluate_model.py` with the `.venv` active. It runs the checkpoint on the 5,751 labeled windows in `X_test.txt` / `Y_test.txt` and writes `models/evaluation.json`; `run.sh` sets `MODEL_EVALUATION_PATH` to that file automatically when it exists. The original training used this split for validation (checkpoint selection), so the artifact labels it as a validation split.
 
 When an independently reviewed artifact is available, set `MODEL_EVALUATION_PATH` to its JSON path before starting Flask. Its schema is:
 

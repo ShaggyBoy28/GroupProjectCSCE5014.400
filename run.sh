@@ -10,5 +10,9 @@ fi
 # shellcheck disable=SC1091
 source .venv/bin/activate
 export PORT="${PORT:-5001}"
+# Model accuracy card: use the evaluation from scripts/evaluate_model.py when it exists
+if [ -z "${MODEL_EVALUATION_PATH:-}" ] && [ -f models/evaluation.json ]; then
+  export MODEL_EVALUATION_PATH=models/evaluation.json
+fi
 echo "Loading models... then open http://127.0.0.1:${PORT}"
 python app.py

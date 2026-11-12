@@ -17,12 +17,12 @@ ACTIVITY_LABELS = (
     "WAVING_1HAND",
     "CLAPPING_HANDS",
 )
-_LABEL_TO_ID = {label: index for index, label in enumerate(ACTIVITY_LABELS)}
-_CLASS_IDS = tuple(range(len(ACTIVITY_LABELS)))
 
 
-def _class_ids(values, name):
+def _class_ids(values, name, labels=ACTIVITY_LABELS):
     """Validate a one-dimensional iterable and normalize labels to IDs."""
+    label_to_id = {label: index for index, label in enumerate(labels)}
+    class_ids = range(len(labels))
     if isinstance(values, (str, bytes)):
         raise ValueError(f"{name} must be a one-dimensional iterable of class labels")
     try:
@@ -34,20 +34,20 @@ def _class_ids(values, name):
 
     result = []
     for index, value in enumerate(values):
-        if isinstance(value, str) and value in _LABEL_TO_ID:
-            result.append(_LABEL_TO_ID[value])
-        elif isinstance(value, Integral) and not isinstance(value, bool) and value in _CLASS_IDS:
+        if isinstance(value, str) and value in label_to_id:
+            result.append(label_to_id[value])
+        elif isinstance(value, Integral) and not isinstance(value, bool) and value in class_ids:
             result.append(int(value))
         else:
             raise ValueError(
-                f"{name}[{index}] must be an integer class ID 0–5 or an exact "
-                f"activity name from {ACTIVITY_LABELS}; got {value!r}. "
+                f"{name}[{index}] must be an integer class ID 0–{len(labels) - 1} or an exact "
+                f"activity name from {tuple(labels)}; got {value!r}. "
                 "Supply discrete class labels, not confidence scores."
             )
     return result
 
 
-def calculate_classification_metrics(y_true, y_pred):
+def calculate_classification_metrics(y_true, y_pred, labels=ACTIVITY_LABELS):
     """Return JSON-compatible metrics from ground truth and actual predictions.
 
     Inputs are nonempty, equally sized, one-dimensional iterables containing
@@ -62,11 +62,16 @@ def calculate_classification_metrics(y_true, y_pred):
     This evaluates the supplied labeled samples only; it does not establish
     that a dataset is independent of training or select a prediction granularity.
 
+    `labels` defaults to the app's six classes; pass a longer tuple to score a
+    model trained with added classes (scripts/train_model.py does this).
+
     Raises:
         ValueError: Inputs are empty, differ in length, or contain invalid labels.
     """
-    actual = _class_ids(y_true, "y_true")
-    predicted = _class_ids(y_pred, "y_pred")
+    labels = tuple(labels)
+    ids = tuple(range(len(labels)))
+    actual = _class_ids(y_true, "y_true", labels)
+    predicted = _class_ids(y_pred, "y_pred", labels)
     if len(actual) != len(predicted):
         raise ValueError(
             "y_true and y_pred must have identical lengths "
@@ -76,7 +81,7 @@ def calculate_classification_metrics(y_true, y_pred):
         raise ValueError("Evaluation inputs must not be empty")
 
     precision, recall, f1, support = precision_recall_fscore_support(
-        actual, predicted, labels=_CLASS_IDS, average=None, zero_division=0
+        actual, predicted, labels=ids, average=None, zero_division=0
     )
     count = len(actual)
     return {
@@ -95,10 +100,10 @@ def calculate_classification_metrics(y_true, y_pred):
                 "f1": float(f1[index]),
                 "support": int(support[index]),
             }
-            for index, label in enumerate(ACTIVITY_LABELS)
+            for index, label in enumerate(labels)
         ],
         "confusionMatrix": confusion_matrix(
-            actual, predicted, labels=_CLASS_IDS
+            actual, predicted, labels=ids
         ).tolist(),
         "sampleCount": count,
     }

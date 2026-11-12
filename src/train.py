@@ -1,67 +1,50 @@
-import getopt
-import sys
-from argparse import ArgumentParser
+"""Original training entry point, ported to PyTorch Lightning 2.x.
+
+    python -m src.train -d <folder with X_train.txt, Y_train.txt, X_test.txt, Y_test.txt>/
+
+Trains on X_train/Y_train, validates on X_test/Y_test, and keeps the checkpoint with the lowest
+validation loss, as the original training did. For cross-validation and quality/scale reports use
+scripts/train_model.py instead.
+
+Fixes against the 1.3-era version: Trainer.add_argparse_args/from_argparse_args, gpus= and
+progress_bar_refresh_rate= no longer exist, and the model was built with WINDOW_SIZE (32) inputs
+instead of 34 (17 keypoints x 2).
+"""
+
+import argparse
 
 import pytorch_lightning as pl
-from pytorch_lightning.callbacks import EarlyStopping
-from pytorch_lightning.callbacks import ModelCheckpoint
-from pytorch_lightning.callbacks import LearningRateMonitor
+from pytorch_lightning.callbacks import EarlyStopping, LearningRateMonitor, ModelCheckpoint
 
-from .lstm import ActionClassificationLSTM, PoseDataModule, WINDOW_SIZE
+from .lstm import ActionClassificationLSTM, PoseDataModule
 
-
-def configuration_parser(parent_parser):
-    parser = ArgumentParser(parents=[parent_parser], add_help=False)
-    # training batch size
-    parser.add_argument('--batch_size', type=int, default=512)
-    # max training epochs = 400
-    parser.add_argument('--epochs', type=int, default=400)
-    # training initial learning rate
-    parser.add_argument('--learning_rate', type=float, default=0.0001)
-    # number of classes = number of human actions in the data set= 6
-    parser.add_argument('--num_class', type=int, default=6)
-    return parser
+INPUT_FEATURES = 34  # 17 Detectron2 keypoints x (x, y)
 
 
-def do_training_validation(argv):
-    opts, args = getopt.getopt(argv, "hd:", ["data_root="])
-    try:
-        opts, args = getopt.getopt(argv, "hd:", ["data_root="])
-    except getopt.GetoptError:
-        print ('train.py -d <data_root>')
-        sys.exit(2)
+def do_training_validation(argv=None):
+    parser = argparse.ArgumentParser(description="Train the activity LSTM on the original split")
+    parser.add_argument("-d", "--data_root", required=True, help="folder with the dataset .txt files (end with /)")
+    parser.add_argument("--batch_size", type=int, default=512)
+    parser.add_argument("--epochs", type=int, default=400)
+    parser.add_argument("--learning_rate", type=float, default=0.0001)
+    parser.add_argument("--hidden_dim", type=int, default=50)
+    args = parser.parse_args(argv)
 
-    for opt, arg in opts:
-        if opt == '-h':
-            print ('train.py -d <data_root>')
-            sys.exit()
-        elif opt in ("-d", "--data_root"):
-            data_root = arg
-    print ('data_root is "', data_root)
-
-    pl.seed_everything(21)    
-    parser = ArgumentParser()
-    parser = pl.Trainer.add_argparse_args(parser)
-    parser = configuration_parser(parser)
-    # args = parser.parse_args()
-    args, unknown = parser.parse_known_args()
-    # print(args)
-    # init model
-    hidden_dim = 50
-    model = ActionClassificationLSTM(WINDOW_SIZE, hidden_dim, learning_rate=args.learning_rate)
-    data_module = PoseDataModule(data_root=data_root, batch_size=args.batch_size)    
-    checkpoint_callback = ModelCheckpoint(save_top_k=1, monitor='val_loss')
-    lr_monitor = LearningRateMonitor(logging_interval='step')    
-    # most basic trainer, uses good defaults
-    trainer = pl.Trainer.from_argparse_args(args,
-        # fast_dev_run=True,
-        max_epochs=args.epochs, 
-        deterministic=True, 
-        gpus=1, 
-        progress_bar_refresh_rate=1, 
-        callbacks=[EarlyStopping(monitor='train_loss', patience=15), checkpoint_callback, lr_monitor])    
-    trainer.fit(model, data_module)    
+    pl.seed_everything(21)
+    data_root = args.data_root if args.data_root.endswith("/") else args.data_root + "/"
+    model = ActionClassificationLSTM(INPUT_FEATURES, args.hidden_dim, learning_rate=args.learning_rate)
+    data_module = PoseDataModule(data_root=data_root, batch_size=args.batch_size)
+    trainer = pl.Trainer(
+        max_epochs=args.epochs,
+        accelerator="auto",
+        deterministic=True,
+        callbacks=[EarlyStopping(monitor="train_loss", patience=15),
+                   ModelCheckpoint(save_top_k=1, monitor="val_loss"),
+                   LearningRateMonitor(logging_interval="step")],
+    )
+    trainer.fit(model, data_module)
     return model
 
-if __name__ == '__main__':
-    do_training_validation(sys.argv[1:])
+
+if __name__ == "__main__":
+    do_training_validation()

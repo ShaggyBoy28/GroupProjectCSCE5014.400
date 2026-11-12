@@ -99,107 +99,55 @@ class PoseDataModule(pl.LightningDataModule):
         )
         return val_loader
 
-# We have 6 output action classes.
+# Number of output classes of the shipped checkpoint (models/saved_model.ckpt).
 TOT_ACTION_CLASSES = 6
 
-#lstm classifier definition
+
 class ActionClassificationLSTM(pl.LightningModule):
-    # initialise method
-    def __init__(self, input_features, hidden_dim, learning_rate=0.001):
+    """LSTM over 32-frame windows of 17 keypoints (34 values per frame).
+
+    Ported to PyTorch Lightning 2.x. Hyperparameters stay compatible with the shipped checkpoint
+    (input_features=34, hidden_dim=50, learning_rate=1e-4); the new ones have defaults that match it.
+
+    num_classes:  number of activities (6 for the shipped model; more after extending the dataset)
+    class_names:  activity names in output order, saved in the checkpoint so the app can read them
+    lr_monitor:   metric that drives the learning-rate scheduler. The original training used "val_loss";
+                  cross-validation uses "train_loss" so the held-out fold never influences training.
+    """
+
+    def __init__(self, input_features, hidden_dim, learning_rate=0.001, num_classes=TOT_ACTION_CLASSES,
+                 class_names=None, lr_monitor="val_loss"):
         super().__init__()
-        # save hyperparameters
         self.save_hyperparameters()
-        # The LSTM takes word embeddings as inputs, and outputs hidden states
-        # with dimensionality hidden_dim.
         self.lstm = nn.LSTM(input_features, hidden_dim, batch_first=True)
-        # The linear layer that maps from hidden state space to classes
-        self.linear = nn.Linear(hidden_dim, TOT_ACTION_CLASSES)
+        self.linear = nn.Linear(hidden_dim, num_classes)
 
     def forward(self, x):
-        # invoke lstm layer
         lstm_out, (ht, ct) = self.lstm(x)
-        # invoke linear layer
         return self.linear(ht[-1])
 
-    def training_step(self, batch, batch_idx):
-        # get data and labels from batch
+    def _step(self, batch, stage):
         x, y = batch
-        # reduce dimension
-        y = torch.squeeze(y)
-        # convert to long
-        y = y.long()
-        # get prediction
-        y_pred = self(x)
-        # calculate loss
-        loss = F.cross_entropy(y_pred, y)
-        # get probability score using softmax
-        prob = F.softmax(y_pred, dim=1)
-        # get the index of the max probability
-        pred = prob.data.max(dim=1)[1]
-        # calculate accuracy
-        acc = torchmetrics.functional.accuracy(pred, y)
-        dic = {
-            'batch_train_loss': loss,
-            'batch_train_acc': acc
-        }
-        # log the metrics for pytorch lightning progress bar or any other operations
-        self.log('batch_train_loss', loss, prog_bar=True)
-        self.log('batch_train_acc', acc, prog_bar=True)
-        #return loss and dict
-        return {'loss': loss, 'result': dic}
+        y = torch.squeeze(y, dim=-1).long() if y.dim() > 1 else y.long()
+        logits = self(x)
+        loss = F.cross_entropy(logits, y)
+        acc = torchmetrics.functional.accuracy(
+            logits.argmax(dim=1), y, task="multiclass", num_classes=self.hparams.num_classes)
+        # on_epoch=True averages over the epoch (replaces the removed *_epoch_end hooks)
+        self.log(f"{stage}_loss", loss, on_step=False, on_epoch=True, prog_bar=True)
+        self.log(f"{stage}_acc", acc, on_step=False, on_epoch=True, prog_bar=True)
+        return loss
 
-    def training_epoch_end(self, training_step_outputs):
-        # calculate average training loss end of the epoch
-        avg_train_loss = torch.tensor([x['result']['batch_train_loss'] for x in training_step_outputs]).mean()
-        # calculate average training accuracy end of the epoch
-        avg_train_acc = torch.tensor([x['result']['batch_train_acc'] for x in training_step_outputs]).mean()
-        # log the metrics for pytorch lightning progress bar and any further processing
-        self.log('train_loss', avg_train_loss, prog_bar=True)
-        self.log('train_acc', avg_train_acc, prog_bar=True)
+    def training_step(self, batch, batch_idx):
+        return self._step(batch, "train")
 
     def validation_step(self, batch, batch_idx):
-        # get data and labels from batch
-        x, y = batch
-        # reduce dimension
-        y = torch.squeeze(y)
-        # convert to long
-        y = y.long()
-        # get prediction
-        y_pred = self(x)
-        # calculate loss
-        loss = F.cross_entropy(y_pred, y)
-        # get probability score using softmax
-        prob = F.softmax(y_pred, dim=1)
-        # get the index of the max probability
-        pred = prob.data.max(dim=1)[1]
-        # calculate accuracy
-        acc = torchmetrics.functional.accuracy(pred, y)
-        dic = {
-            'batch_val_loss': loss,
-            'batch_val_acc': acc
-        }
-        # log the metrics for pytorch lightning progress bar and any further processing
-        self.log('batch_val_loss', loss, prog_bar=True)
-        self.log('batch_val_acc', acc, prog_bar=True)
-        #return dict
-        return dic
-
-    def validation_epoch_end(self, validation_step_outputs):
-        # calculate average validation loss end of the epoch
-        avg_val_loss = torch.tensor([x['batch_val_loss']
-                                     for x in validation_step_outputs]).mean()
-        # calculate average validation accuracy end of the epoch
-        avg_val_acc = torch.tensor([x['batch_val_acc']
-                                    for x in validation_step_outputs]).mean()
-        # log the metrics for pytorch lightning progress bar and any further processing
-        self.log('val_loss', avg_val_loss, prog_bar=True)
-        self.log('val_acc', avg_val_acc, prog_bar=True)
+        return self._step(batch, "val")
 
     def configure_optimizers(self):
-        # adam optimiser
         optimizer = optim.Adam(self.parameters(), lr=self.hparams.learning_rate)
-        # learning rate reducer scheduler
-        scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=10, min_lr=1e-15, verbose=True)
-        # scheduler reduces learning rate based on the value of val_loss metric
+        # halve the learning rate when the monitored loss stops improving
+        scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=10, min_lr=1e-15)
         return {"optimizer": optimizer,
-                "lr_scheduler": {"scheduler": scheduler, "interval": "epoch", "frequency": 1, "monitor": "val_loss"}}
+                "lr_scheduler": {"scheduler": scheduler, "interval": "epoch", "frequency": 1,
+                                 "monitor": self.hparams.lr_monitor}}
