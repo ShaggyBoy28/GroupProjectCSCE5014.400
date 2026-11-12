@@ -11,6 +11,7 @@ from werkzeug.utils import secure_filename
 from src.api import LABELS as API_LABELS, create_api_blueprint
 from src.dataset_api import create_dataset_blueprint
 from src.evaluation import load_evaluation
+from src.live_analyzer import LivePoseClassifier
 from src.lstm import ActionClassificationLSTM, WINDOW_SIZE
 from src.video_analyzer import LABELS, analyse_video, analyse_video_events, probe_video, stream_video
 
@@ -57,6 +58,7 @@ if lstm_classifier.hparams.get("class_names"):
     LABELS.clear()
     LABELS.update(enumerate(lstm_classifier.hparams.class_names))
     API_LABELS[:] = list(lstm_classifier.hparams.class_names)
+live_classifier = LivePoseClassifier(pose_detector, lstm_classifier)
 
 
 class AnalysisServices:
@@ -69,6 +71,18 @@ class AnalysisServices:
     @staticmethod
     def analyze(path):
         return analyse_video_events(pose_detector, lstm_classifier, path)
+
+    @staticmethod
+    def start_live_session():
+        return live_classifier.start()
+
+    @staticmethod
+    def classify_live_frame(session_id, frame):
+        return live_classifier.process_frame(session_id, frame)
+
+    @staticmethod
+    def stop_live_session(session_id):
+        return live_classifier.stop(session_id)
 
     @staticmethod
     def model_metrics():
@@ -107,6 +121,7 @@ def cleanString(v: str):
 # React frontend: build it with `npm run build` in frontend/.
 # Client-side routes (/analyzing/..., /results/...) all return index.html.
 @app.route('/', methods=['GET'])
+@app.route('/live', methods=['GET'])
 @app.route('/analyzing/<path:_>', methods=['GET'])
 @app.route('/results/<path:_>', methods=['GET'])
 @app.route('/dataset', methods=['GET'])

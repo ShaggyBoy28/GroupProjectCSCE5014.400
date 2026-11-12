@@ -5,6 +5,7 @@ import { AnalyzingPage } from './pages/AnalyzingPage';
 import { BreakdownView } from './pages/BreakdownPage';
 import { DatasetPage } from './pages/DatasetPage';
 import { HomePage } from './pages/HomePage';
+import { LiveCameraPage } from './pages/LiveCameraPage';
 import { ResultsLayout, ResultVideoView } from './pages/ResultsPage';
 
 export function App() {
@@ -19,6 +20,7 @@ export function App() {
         }
       >
         <Route index element={<HomePage />} />
+        <Route path="live" element={<LiveCameraPage />} />
         <Route path="analyzing/:video" element={<AnalyzingPage />} />
         <Route path="dataset" element={<DatasetPage />} />
         <Route path="results/:video" element={<ResultsLayout />}>

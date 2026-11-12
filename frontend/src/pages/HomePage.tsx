@@ -36,6 +36,15 @@ export function HomePage() {
         <UploadCard />
         <SampleCard />
       </div>
+      <Card className="flex flex-col items-center gap-4 px-8 py-8 text-center md:flex-row md:justify-between md:text-left">
+        <div className="flex flex-col gap-1">
+          <h2 className="text-[20px] font-semibold">Classify live with your camera</h2>
+          <p className="max-w-[620px] text-[14px] leading-6 text-muted">
+            Turn on your camera to see pose-based activity predictions while you move.
+          </p>
+        </div>
+        <PillLink to="/live">Start live camera</PillLink>
+      </Card>
       <Card className="flex flex-col gap-7 px-6 py-9 md:px-10">
         <h2 className="text-[27px] font-bold tracking-[-0.56px]">How it works.</h2>
         <ol className="grid gap-8 md:grid-cols-3 md:gap-10">

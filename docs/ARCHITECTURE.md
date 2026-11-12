@@ -422,3 +422,159 @@ Differences from older documentation are material. `docs/ORIGINAL_README.md` des
 - **Diagram validation:** all four Mermaid diagrams passed Mermaid CLI 12.0.0 parsing and rendered successfully to SVG and PNG using local headless Chromium. Exports use a white background, consistent category colors, wider labels and Mermaid's bundled ELK layout. The rendered images were visually reviewed; nodes, relationships and original Mermaid source blocks are preserved. PNGs are exported at 2x scale, up to 6,400 pixels on the longest side. SVGs remain scalable. Native GitHub preview was not separately tested.
 
 Inspection covered the source/configuration files linked in sections 2–8, `templates/index.html`, the run scripts, `requirements-modern.txt`, the model directory and the PyTorch notebook's training cells. Checkpoint inspection was read-only metadata inspection. This document introduces no application, dataset, checkpoint or API changes.
+
+
+## User Experience and Application Flow
+
+This user flow describes the implemented React interface for the CSCE 5214 presentation. A person opens the home page, uploads an existing MP4 or chooses **Analyze sample**, follows processing progress, and receives the annotated result video automatically. **Activity breakdown** provides detected activities and confidence graphs; **Download video** saves the annotated MP4, and **Analyze another** returns home.
+
+Diagram source: [user-flow.mmd](diagrams/user-flow.mmd). The identical source is embedded below for Mermaid-capable Markdown viewers. SVG/PNG exports are unavailable in this session: the existing Mermaid CLI could not find its expected Chromium runtime, and installed Chrome/Edge launch attempts failed. No software was installed.
+
+The decisions below describe application states and user choices; they are not extra confirmation dialogs. Blue rounded nodes represent actions or screen states, amber diamonds represent decisions, green nodes represent results, and rose nodes represent errors or empty states. The source file and embedded diagram are identical.
+
+```mermaid
+---
+title: Human Activity Detection - User Experience
+config:
+  theme: base
+  themeVariables:
+    fontFamily: Segoe UI, Arial, sans-serif
+    fontSize: 18px
+    primaryTextColor: '#172033'
+    lineColor: '#64748b'
+    edgeLabelBackground: '#ffffff'
+  flowchart:
+    htmlLabels: false
+    curve: linear
+    nodeSpacing: 30
+    rankSpacing: 42
+---
+flowchart TD
+    OPEN("User opens application") --> HOME("View home page")
+
+    subgraph INPUT["1. Choose and submit a video"]
+        SOURCE{"Use your own video?"}
+        CHOOSE("Choose file...")
+        VALID{"MP4 file selected?"}
+        INVALID("Analyze disabled; choose a file<br/>Non-MP4: show MP4-only message")
+        SUBMIT("Click Analyze<br/>Show Uploading...")
+        UPLOADED{"Upload succeeded?"}
+        UPLOAD_ERROR("Show upload error on home page<br/>Retry Analyze or choose another file")
+        SAMPLE("Click Analyze sample")
+        SOURCE -->|Yes| CHOOSE --> VALID
+        SOURCE -->|No| SAMPLE
+        VALID -->|No| INVALID --> CHOOSE
+        VALID -->|Yes| SUBMIT --> UPLOADED
+        UPLOADED -->|No| UPLOAD_ERROR
+        UPLOAD_ERROR -->|Retry same file| SUBMIT
+        UPLOAD_ERROR -->|Choose another| CHOOSE
+    end
+    HOME --> SOURCE
+
+    subgraph ANALYSIS["2. Follow the analysis"]
+        PROGRESS("Analysis starts automatically<br/>Watch input video and progress<br/>Frames, current label, live performance")
+        SUCCESS{"Analysis completed successfully?"}
+        STOPPED("The analysis stopped.<br/>Show processing or connection error")
+        PROGRESS -->|Keep page open; wait| SUCCESS
+        SUCCESS -->|No| STOPPED
+    end
+    UPLOADED -->|Yes| PROGRESS
+    SAMPLE --> PROGRESS
+
+    subgraph RESULTS["3. Explore results"]
+        LOAD("Results open automatically<br/>Loading results...")
+        LOADED{"Results loaded?"}
+        LOAD_ERROR("We couldn't load this video.<br/>Show error")
+        READY{"Video analyzed?"}
+        NOT_READY("This video hasn't been analyzed yet.<br/>Click Analyze it now")
+        WATCH("Result video<br/>Play annotated video with activity labels<br/>View length, frames, frame rate, resolution")
+        DETAILS{"View Activity breakdown?"}
+        BREAKDOWN("Click Activity breakdown<br/>Loading breakdown...")
+        DETAIL_OK{"Breakdown loaded?"}
+        DETAIL_ERROR("We couldn't load the breakdown.<br/>Show error")
+        DETECTED{"Any activity detected?"}
+        CHARTS("View main activity and confidence<br/>Timeline, confidence graph,<br/>time per activity and segments")
+        EMPTY("No activity was detected.<br/>Show guidance for a suitable clip")
+        PERFORMANCE("View Performance when available<br/>Processing time, throughput, memory")
+        LOAD --> LOADED
+        LOADED -->|No| LOAD_ERROR
+        LOADED -->|Yes| READY
+        READY -->|No| NOT_READY
+        READY -->|Yes| WATCH --> DETAILS
+        DETAILS -->|Yes| BREAKDOWN --> DETAIL_OK
+        DETAIL_OK -->|No| DETAIL_ERROR
+        DETAIL_OK -->|Yes| DETECTED
+        DETECTED -->|Yes| CHARTS --> PERFORMANCE
+        DETECTED -->|No| EMPTY --> PERFORMANCE
+    end
+    SUCCESS -->|Yes| LOAD
+    NOT_READY --> PROGRESS
+
+    subgraph NAV["4. Download or start again"]
+        DOWNLOAD{"Download video?"}
+        SAVE("Click Download video<br/>Save annotated MP4")
+        ANOTHER{"Analyze another video?"}
+        BACK("Click Analyze another<br/>or Back to home / Home")
+        STAY("Continue viewing results")
+        DOWNLOAD -->|Yes| SAVE --> ANOTHER
+        DOWNLOAD -->|No| ANOTHER
+        ANOTHER -->|Yes| BACK
+        ANOTHER -->|No| STAY
+    end
+    DETAILS -->|No| DOWNLOAD
+    PERFORMANCE --> DOWNLOAD
+    DETAIL_ERROR -->|Result video tab| WATCH
+    DETAIL_ERROR -->|Back to home| BACK
+    LOAD_ERROR -->|Back to home| BACK
+    STOPPED -->|Back to home| BACK
+    STAY -->|Result video tab| WATCH
+    BACK --> HOME
+
+    classDef action fill:#eff6ff,stroke:#3b82f6,color:#172033,stroke-width:1.5px;
+    classDef decision fill:#fff8e6,stroke:#c68a16,color:#172033,stroke-width:1.5px;
+    classDef error fill:#fff1f2,stroke:#dc5668,color:#821c32,stroke-width:1.5px;
+    classDef result fill:#ecfdf5,stroke:#27956a,color:#163c30,stroke-width:1.5px;
+    class OPEN,HOME,CHOOSE,SUBMIT,SAMPLE,PROGRESS,LOAD,NOT_READY,BREAKDOWN,SAVE,BACK,STAY action;
+    class SOURCE,VALID,UPLOADED,SUCCESS,LOADED,READY,DETAILS,DETAIL_OK,DETECTED,DOWNLOAD,ANOTHER decision;
+    class INVALID,UPLOAD_ERROR,STOPPED,LOAD_ERROR,DETAIL_ERROR,EMPTY error;
+    class WATCH,CHARTS,PERFORMANCE result;
+    style INPUT fill:#f8fafc,stroke:#cbd5e1
+    style ANALYSIS fill:#f8fafc,stroke:#cbd5e1
+    style RESULTS fill:#f8fafc,stroke:#cbd5e1
+    style NAV fill:#f8fafc,stroke:#cbd5e1
+```
+
+### Major user actions and visible information
+
+| Stage | Implemented interaction and display |
+|---|---|
+| Choose a source | **Choose file...** opens a file picker; the selected filename appears and the label becomes **Choose another file...**. Alternatively, **Analyze sample** uses the bundled sample without uploading. There is no recorder/source-selection dialog; the flow's source decision represents these two home-page cards. |
+| Validate and submit | **Analyze** is disabled until a file with a case-insensitive `.mp4` filename suffix is selected, and while uploading. Other suffixes show **Only .mp4 files are supported**. Selecting a file alone does not start analysis. Clicking **Analyze** uploads it and shows **Uploading...**. This filename check does not verify that the video can be decoded. |
+| Follow progress | A successful upload opens the analysis page; the sample opens it directly. Analysis starts on entering that page. The original video loops alongside a percentage, progress bar, analyzed/total frame counts, and the current activity label (initially **Waiting...**). The page asks users to keep it open. |
+| View live performance | **Live performance** appears when measurements arrive: time per frame, throughput, pose detection time, LSTM inference time, and memory. Missing numerical values display a dash. Live confidence is optional UI scaffolding and is not emitted by the current backend. |
+| Receive results | Navigation occurs on successful completion, not merely on reaching 100%. **Loading results...** precedes the **Result video** tab. Users can play the annotated video with skeleton and predicted activity, and inspect length, frame count, frame rate and resolution. |
+| Explore details | **Activity breakdown** loads main activity/share, label changes, average confidence, prediction count, activity timeline, per-class **Confidence over time**, time per activity, and segment average/peak confidence. The current display names are Jumping, Jumping jacks, Boxing, Waving (2 hands), Waving (1 hand), and Clapping hands. |
+| Inspect final performance | **Performance** in the breakdown shows whole-video processing time, average frame/pose/LSTM times, average throughput and peak memory when a performance record exists. It also appears in the no-predictions view. These measurements describe processing, not model accuracy. |
+| Download or navigate | **Download video** and **Analyze another** remain in the shared results header on both tabs, including breakdown loading/error/empty states. Users can switch between **Result video** and **Activity breakdown** repeatedly. The diagram places download after viewing for readability; viewing details is not required to download. **Home**, the application logo, and **New analysis** also return home. Navigating home is not a dedicated cancel-job control or a promise of resumable processing. |
+
+### User-visible errors and recovery
+
+- **No selection or wrong suffix:** Analyze stays disabled. A non-MP4 selection shows the MP4-only message; choose a suitable file. Other video problems can surface during processing rather than selection.
+- **Upload failure:** the home-page upload card displays the API error, or `Request failed (status)` if no JSON error is available. Analyze becomes enabled again and the selected file remains, so users can retry it or choose another file. Server validation, size-limit, conflict and storage errors all follow this path; the default server upload limit is 200 MB and is configurable, not a client-side size check.
+- **Processing or connection failure:** **The analysis stopped.** displays the error and **Back to home**. A lost stream reports **Lost connection to the server while analyzing.** The stream closes; there is no automatic reconnect or Retry button. Return home to submit a file again or use the sample.
+- **Result metadata failure:** **We couldn't load this video.** shows the error and **Back to home**. If metadata loads but the video is not analyzed, **This video hasn't been analyzed yet.** offers **Analyze it now**, which starts processing again. This is particularly relevant when opening a results URL directly.
+- **Breakdown failure:** **We couldn't load the breakdown.** shows the error and **Back to home**. The shared results header and tabs remain available, so users can return to **Result video**, download, or analyze another clip. There is no dedicated breakdown Retry button.
+- **No predictions:** **No activity was detected.** gives guidance to use one person with the whole body visible for at least 32 frames. Performance and optional model evaluation cards may still appear. This is an empty result, not a failed analysis; playback/download and navigation remain available. Inference actually needs enough accepted poses, so 32 video frames alone do not guarantee a prediction.
+- **Other navigation/media limits:** unknown routes show **Page not found.** with a home link. Video playback and download use native browser behavior; the application has no custom playback/download error or retry panel. These secondary paths are described here to keep the diagram readable.
+
+### Planned and conditional features
+
+In-app video recording and live camera classification are not implemented. Smoothing, majority voting, confidence thresholds, an Uncertain label and live confidence are planned backend features with conditional frontend displays; they are not included as completed user actions in the flow.
+
+The **Model accuracy** card is implemented but conditional on a valid, reviewed offline evaluation artifact. No such artifact is bundled, so the normal response has `metrics: null` and the card is hidden. When configured, it shows accuracy, precision, recall, F1, per-class metrics and a confusion matrix. Uploaded-video confidence scores do not establish model accuracy. Performance measurements, unlike smoothing, are implemented despite stale planned comments in `api.ts`.
+
+### Inspection and validation
+
+The flow was checked against [App.tsx](../frontend/src/App.tsx), [HomePage.tsx](../frontend/src/pages/HomePage.tsx), [AnalyzingPage.tsx](../frontend/src/pages/AnalyzingPage.tsx), [ResultsPage.tsx](../frontend/src/pages/ResultsPage.tsx), [BreakdownPage.tsx](../frontend/src/pages/BreakdownPage.tsx), [api.ts](../frontend/src/api.ts), [lib.ts](../frontend/src/lib.ts), [components.tsx](../frontend/src/components.tsx), and [API.md](API.md) on `feature/backend-performance-metrics`. Existing architecture sections and diagrams are preserved. No application code, endpoints, datasets or checkpoints were modified.
+
+Mermaid CLI 12.0.0's installed Mermaid parser accepted the source as `flowchart-v2`. Parser-only validation preserved label text with a no-op sanitizer because Node has no browser DOM; no HTML was evaluated or rendered. Graph checks verified all 11 decisions have Yes/No branches, all 32 workflow nodes are reachable, and no workflow node is a dead end. Source/Markdown equality and preservation of the original architecture content were checked. Rendering and visual layout remain unverified because a working browser renderer was unavailable; the React app and model inference were not run for this documentation-only change.
